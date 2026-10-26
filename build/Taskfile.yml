@@ -1,11 +1,17 @@
 version: '3'
 
-# 公共构建步骤: 前端依赖与构建、TS 绑定生成、图标、服务器版二进制与 Docker 镜像。
-# 由根目录 Taskfile.yml 以 `common:` 命名空间引入, 桌面打包步骤在 windows/Taskfile.yml。
+# 公共构建步骤: 前端依赖与构建、TS 绑定生成、图标、构建资源更新、
+# 服务器版二进制与 Docker 镜像。
+# 由根目录 Taskfile.yml 以 `common:` 命名空间引入;
+# 各平台打包步骤分别在 build/{windows,darwin,linux,ios,android}/Taskfile.yml。
+
+vars:
+  # 交叉编译镜像 (build/docker/Dockerfile.cross), 只在非本机平台/需要 CGO 时用到。
+  CROSS_IMAGE: wails-cross
 
 tasks:
   go:mod:tidy:
-    summary: go mod tidy
+    desc: go mod tidy
     internal: true
     # 多架构构建会并发调用此任务; run: once 避免两个 go mod tidy 同时改 go.mod。
     run: once
@@ -13,7 +19,7 @@ tasks:
       - go mod tidy
 
   install:frontend:deps:
-    summary: 安装前端依赖 (npm)
+    desc: 安装前端依赖 (npm)
     run: once
     dir: frontend
     sources:
@@ -28,7 +34,8 @@ tasks:
       - npm install
 
   build:frontend:
-    summary: 构建前端 (DEV=true 时不压缩)
+    desc: 构建前端 (DEV=true 时不压缩)
+    # 通用二进制/多架构构建会并行调用本任务, run: once 避免 bindings 与 dist 互相踩写。
     run: once
     dir: frontend
     sources:
@@ -50,7 +57,7 @@ tasks:
       PRODUCTION: '{{if eq .DEV "true"}}false{{else}}true{{end}}'
 
   generate:bindings:
-    summary: 生成前端 TypeScript 绑定 (frontend/bindings)
+    desc: 生成前端 TypeScript 绑定 (frontend/bindings)
     run: once
     deps:
       - task: go:mod:tidy
@@ -67,20 +74,29 @@ tasks:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true{{if eq .OBFUSCATED "true"}} -obfuscated{{end}} -ts -i
 
   generate:icons:
-    summary: 由 build/appicon.png 生成 Windows 图标
+    desc: 由 build/appicon.png 生成 Windows .ico 与 macOS .icns
     run: once
     dir: build
     sources:
       - "appicon.png"
     generates:
       - "windows/icon.ico"
-      - "icon.icns"
+      - "darwin/icons.icns"
     cmds:
-      # 只做 Windows 图标; -macfilename 指到本地文件, 免得它去找已删除的 build/darwin 目录。
-      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico -macfilename icon.icns
+      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico -macfilename darwin/icons.icns
+
+  update:build-assets:
+    desc: 按 build/config.yml 重新生成各平台构建资源
+    summary: |
+      重新生成 darwin/ios 的 Info.plist、iOS 工程、linux 的 desktop/nfpm、
+      windows 的 info.json/manifest 等。Taskfile 与图标不会被覆盖。
+      改完 config.yml 的 info 段后建议接着跑 common:generate:icons。
+    dir: build
+    cmds:
+      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir .
 
   dev:frontend:
-    summary: 以开发模式启动 Vite
+    desc: 以开发模式启动 Vite
     deps:
       - task: install:frontend:deps
     dir: frontend
@@ -88,10 +104,10 @@ tasks:
       - npm run dev -- --port {{.VITE_PORT}} --strictPort
 
   build:server:
-    summary: 构建服务器版二进制 (纯 HTTP, 无 GUI 依赖)
-    desc: |
+    desc: 构建服务器版二进制 (纯 HTTP, 无 GUI 依赖)
+    summary: |
       默认产出生产包: -tags server,production, -trimpath, 去掉符号表。
-      用法: task build:server [DEV=true] [OBFUSCATED=true] [EXTRA_TAGS=tag1,tag2]
+      用法: task build:server [DEV=true] [OBFUSCATED=true] [EXTRA_TAGS=tag1,tag2] [APP_VERSION=1.2.3]
         DEV=true        开发包 (-tags server, 不裁剪, 保留内联)
         OBFUSCATED=true 用 garble 混淆 (需自行安装 garble)
         EXTRA_TAGS      追加的构建标签
@@ -113,7 +129,7 @@ tasks:
       BUILD_FLAGS: '-tags server{{if eq .DEV "true"}}{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -buildvcs=false -gcflags=all="-l"{{else}},production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s{{if .APP_VERSION}} -X main.Version={{.APP_VERSION}}{{end}}"{{end}}'
 
   run:server:
-    summary: 构建并运行开发版服务器 (DEV=true)
+    desc: 构建并运行开发版服务器 (DEV=true)
     deps:
       - task: build:server
         vars:
@@ -121,9 +137,22 @@ tasks:
     cmds:
       - '"./{{.BIN_DIR}}/{{.APP_NAME}}-server{{exeExt}}"'
 
+  setup:docker:
+    desc: 构建交叉编译镜像 wails-cross (~800MB)
+    summary: |
+      在 Windows 上交叉编译 Linux/macOS 桌面版 (需要 CGO) 时用这个镜像。
+      只需要服务器版的 Linux 产物时不用装, 直接 GOOS=linux go build 即可。
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: "需要 Docker, 请先安装"
+      - sh: test -f build/docker/Dockerfile.cross
+        msg: "缺少 build/docker/Dockerfile.cross"
+    cmds:
+      - docker build -t {{.CROSS_IMAGE}} -f build/docker/Dockerfile.cross build/docker/
+
   build:docker:
-    summary: 构建服务器版 Docker 镜像
-    desc: |
+    desc: 构建服务器版 Docker 镜像
+    summary: |
       先在本地构建生产前端 (嵌入二进制), 再用 build/docker/Dockerfile.server 打包。
       用法: task build:docker [TAG=seuszjz:latest] [CGO_ENABLED=1] [GO_IMAGE=...] [RUNTIME_IMAGE=...]
     deps:
@@ -141,14 +170,15 @@ tasks:
         --build-arg CGO_ENABLED={{.CGO_ENABLED | default "0"}}
         --build-arg GO_IMAGE={{.GO_IMAGE | default "golang:alpine"}}
         --build-arg RUNTIME_IMAGE={{.RUNTIME_IMAGE | default "gcr.io/distroless/static-debian12"}}
+        --build-arg APP_VERSION={{.APP_VERSION}}
         -t {{.TAG | default (printf "%s:latest" .APP_NAME)}}
         -f build/docker/Dockerfile.server .
     vars:
       TAG: "{{.TAG}}"
 
   run:docker:
-    summary: 构建并运行 Docker 镜像 (宿主机 8080)
-    desc: |
+    desc: 构建并运行 Docker 镜像 (宿主机 8080)
+    summary: |
       用法: task run:docker [TAG=seuszjz:latest] [PORT=8080]
       容器内端口固定 8080, PORT 只改宿主机映射。
     deps:

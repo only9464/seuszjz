@@ -1,7 +1,25 @@
 version: '3'
 
-# 东南大学讲座助手: 同一份 Go 代码编出 Windows 桌面版 (默认) 与服务器版 (-tags server)。
-# 桌面相关的打包步骤在 build/windows/Taskfile.yml, 公共步骤在 build/Taskfile.yml。
+# 东南大学讲座助手 —— 一份 Go 代码编出全部平台的产物:
+#
+#   桌面  windows:bin/seuszjz.exe  darwin:bin/seuszjz.app  linux:bin/seuszjz
+#   移动  ios:bin/seuszjz.app      android:bin/seuszjz.apk
+#   服务  bin/seuszjz-server(.exe) + Docker 镜像 (ghcr.io/only9464/seuszjz)
+#
+# 常用命令 (前缀可省, wails3 task 与 task 等价):
+#   wails3 task build                     本机桌面版
+#   wails3 task package                    本机安装包
+#   wails3 task windows:build ARCH=arm64  指定平台/架构
+#   wails3 task darwin:package:universal  macOS 通用二进制 .app + dmg
+#   wails3 task linux:package             deb/rpm/AppImage
+#   wails3 task android:package           release APK
+#   wails3 task ios:package               iOS .app (模拟器)
+#   wails3 task build:server              服务器版二进制
+#   wails3 task dev                       开发模式 (前端热更新)
+#
+# 版本号: 所有平台的 go build 都会注入 -X main.Version。
+#   本机:  wails3 task windows:build APP_VERSION=1.2.3
+#   CI:    由 tag 推导后以 APP_VERSION 环境变量传入 (见 .github/workflows)。
 
 vars:
   APP_NAME: "seuszjz"
@@ -9,45 +27,104 @@ vars:
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
   # Windows 下可执行文件带 .exe, 其它平台为空。
   exeExt: '{{if eq OS "windows"}}.exe{{end}}'
-  # 目标系统; 默认当前系统, 便于 `task build` 在本机直接跑。
+  # 目标系统; 默认当前系统。`GOOS=linux wails3 task build` 可交叉编译
+  # (Linux/macOS 桌面版需要 CGO, 非本机系统时会走 build/docker 的交叉镜像)。
   GOOS: '{{.GOOS | default OS}}'
 
 includes:
   common: ./build/Taskfile.yml
   windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+  ios: ./build/ios/Taskfile.yml
+  android: ./build/android/Taskfile.yml
 
 tasks:
   build:
-    summary: 构建桌面版 (Windows)
+    desc: 构建桌面版 (当前系统, 或 GOOS=windows|darwin|linux)
     cmds:
       - task: "{{.GOOS}}:build"
 
+  package:
+    desc: 打安装包 (windows:NSIS / darwin:.app+dmg / linux:deb+rpm+AppImage)
+    cmds:
+      - task: "{{.GOOS}}:package"
+
   run:
-    summary: 构建并运行桌面版
+    desc: 构建并运行桌面版
     cmds:
       - task: "{{.GOOS}}:run"
 
   dev:
-    summary: 开发模式 (前端热更新 + 自动重编 Go)
+    desc: 开发模式 (前端热更新 + 自动重编 Go)
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  # ---- 静态检查与测试 (CI 与本机共用, 只编 server 标签, 不需要图形库) ----
+  vet:
+    desc: go vet (server 标签)
+    cmds:
+      - go vet -tags server ./...
+
+  test:
+    desc: go vet + 单元测试 (server 标签)
+    cmds:
+      - task: vet
+      - go test -tags server ./...
+
+  # ---- 构建资源 ----
+  generate:icons:
+    desc: 由 build/appicon.png 生成 windows/icon.ico 与 darwin/icons.icns
+    cmds:
+      - task: common:generate:icons
+
+  update:build-assets:
+    desc: 按 build/config.yml 重新生成各平台构建资源 (plist / gradle / nfpm ...)
+    summary: |
+      修改 build/config.yml 的 info 段 (产品名、bundle id、版本号) 之后运行本任务,
+      再 `wails3 task common:generate:icons`。Taskfile 不会被覆盖。
+    cmds:
+      - task: common:update:build-assets
+
+  setup:docker:
+    desc: 构建交叉编译镜像 wails-cross (~800MB, Linux/macOS 桌面版交叉编译用)
+    cmds:
+      - task: common:setup:docker
+
+  # ---- 服务器版 (纯 HTTP, 无 GUI) ----
   build:server:
-    summary: 构建服务器版二进制 (本机平台, 纯 HTTP 无 GUI)
+    desc: 构建服务器版二进制 (本机平台)
     cmds:
       - task: common:build:server
 
   run:server:
-    summary: 构建并运行服务器版
+    desc: 构建并运行服务器版
     cmds:
       - task: common:run:server
 
   build:docker:
-    summary: 构建服务器版 Docker 镜像
+    desc: 构建服务器版 Docker 镜像
     cmds:
       - task: common:build:docker
 
   run:docker:
-    summary: 构建并运行 Docker 镜像 (默认映射 8080)
+    desc: 构建并运行 Docker 镜像 (默认映射 8080)
     cmds:
       - task: common:run:docker
+
+  clean:
+    desc: 清掉全部产物与中间文件
+    cmds:
+      - cmd: >-
+          powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          '{{.BIN_DIR}}','build/bin','frontend/dist','build/ios/xcode','build/android/gen',
+          'build/android/.gradle','build/android/app/build','build/linux/build','build/linux/appimage/build';
+          Remove-Item -Force -ErrorAction SilentlyContinue 'wails_windows_*.syso','build/linux/*.desktop'"
+        platforms: [windows]
+      - cmd: rm -rf "{{.BIN_DIR}}" build/bin wails_windows_*.syso frontend/dist build/linux/build build/linux/*.desktop build/linux/appimage/build build/ios/xcode build/android/overlay.json build/android/gen build/android/.gradle build/android/app/build
+        platforms: [linux, darwin]
+
+  doctor:
+    desc: 检查构建环境 (Go / Node / wails3 / 平台依赖)
+    cmds:
+      - wails3 doctor

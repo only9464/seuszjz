@@ -1,8 +1,9 @@
 # 东南大学讲座助手（seuszjz）
 
-东南大学「学生素质讲座」预约系统的第三方客户端。Wails 3 + Vue 3 + TypeScript，界面基于 shadcn-vue（Tailwind CSS v4，黑白配色），一份代码编出两个形态：
+东南大学「学生素质讲座」预约系统的第三方客户端。Wails 3 + Vue 3 + TypeScript，界面基于 shadcn-vue（Tailwind CSS v4，黑白配色），一份代码编出多平台产物：
 
-- **Windows 桌面版**：单文件 `bin\seuszjz.exe`，双击即用，前端资源与验证码模型全部内嵌。
+- **桌面版**：Windows `bin\seuszjz.exe`（单文件、双击即用）、macOS `.app` / `.dmg`（Apple Silicon + Intel 通用二进制）、Linux AppImage / deb / rpm；前端资源与验证码模型全部内嵌。
+- **移动版**：Android APK / AAB、iOS 模拟器包。
 - **服务器版**：`-tags server` 构建的纯 HTTP 服务（无 GTK / WebView 依赖），打包成 Docker 镜像后用浏览器访问。
 
 登录态、账号、密码、会话 Cookie 只存在浏览器的 `localStorage` 里，程序不会在运行的机器上生成任何配置或会话文件。
@@ -27,22 +28,38 @@
 
 | 用途 | 依赖 |
 | --- | --- |
-| 运行桌面版 | Windows 10/11（WebView2 运行时，Win11 自带） |
+| 运行桌面版 | Windows 10/11（WebView2 运行时，Win11 自带）/ macOS 12+ / Linux（GTK4 + WebKitGTK 6.0） |
+| 运行移动版 | iOS 15+ / Android 7.0（API 21+） |
 | 运行服务器版 | 任意支持 Docker 的系统 |
-| 构建 | Go 1.26+、Node.js 20+、[wails3 CLI](https://v3.wails.io/) v3.0.0-beta.34、npm；`task` 可选 |
+| 通用构建 | Go 1.26+、Node.js 20+、[wails3 CLI](https://v3.wails.io/) v3.0.0-beta.34、npm；`task` 可选 |
+| Windows 桌面版 | 无额外依赖（纯 Go 交叉编译，CGO 关闭，`ARCH=amd64|arm64` 都行） |
+| macOS 桌面版 | macOS + Xcode 命令行工具；非 macOS 主机走 Docker 交叉镜像 |
+| Linux 桌面版 | `libgtk-4-dev`、`libwebkitgtk-6.0-dev`（Ubuntu/Debian：`sudo apt install`） |
+| iOS | macOS + Xcode（`xcrun`）；真机分发还需要开发者证书与描述文件 |
+| Android | JDK 17+、Android SDK 35、NDK（`ANDROID_NDK_HOME`）；Gradle 由 wrapper 自带 |
 
 运行时不依赖 Python、onnxruntime、CUDA，也不需要显卡。
 
 ## 构建与运行
 
-桌面版（Windows）：
+一份代码，`wails3 task` 按平台分发（`wails3 task <名字>` 与系统里的 `task <名字>` 等价）：
 
-```powershell
-wails3 dev                 # 开发模式：Vite 热更新 + Go 自动重编
-wails3 task build          # 生产构建 → bin\seuszjz.exe
+```bash
+wails3 dev           # 开发模式：Vite 热更新 + Go 自动重编
+wails3 task build    # 当前系统的桌面版 → bin/
+wails3 task package  # 当前系统的安装包
 ```
 
-服务器版：
+| 平台 | 构建 | 打包 / 分发 |
+| --- | --- | --- |
+| Windows | `wails3 task windows:build [ARCH=amd64\|arm64]` | `windows:package`（NSIS 安装包）、`windows:package:zip`（绿色 zip） |
+| macOS | `wails3 task darwin:build` / `darwin:build:universal` | `darwin:package`（.app）、`darwin:package:universal:all`（.app + dmg + zip） |
+| Linux | `wails3 task linux:build` | `linux:package`（AppImage + deb + rpm） |
+| iOS | `wails3 task ios:package`（模拟器，ad-hoc 签名） | `ios:package:ipa`（真机，需要证书） |
+| Android | `wails3 task android:build` | `android:package`（release APK）、`android:bundle`（AAB）、`*:fat`（多架构） |
+| 服务器版 | `wails3 task build:server` | `build:docker` → `seuszjz:latest` |
+
+服务器版细项：
 
 ```bash
 wails3 task build:server   # 本机平台的纯 HTTP 二进制 → bin/seuszjz-server
@@ -50,7 +67,11 @@ wails3 task build:docker   # Docker 镜像，默认 seuszjz:latest
 wails3 task run:docker     # 构建并运行，浏览器打开 http://127.0.0.1:8080/
 ```
 
-`wails3 task <名字>` 与系统里的 `task <名字>` 等价；`taskfile` 里只保留了 Windows 桌面打包和服务器镜像，macOS/iOS/NSIS/MSIX 之类的模板任务已删除。
+几个约定：
+
+- 版本号统一走 `APP_VERSION`，会注入到 `main.Version`：`APP_VERSION=1.2.3 wails3 task windows:build`。
+- Windows 桌面版与服务器版是纯 Go（CGO 关闭），可以随意交叉编译；Linux/macOS 桌面版需要 CGO，在 Windows 上编它们会走 `wails3 task setup:docker` 准备的交叉镜像（`build/docker/Dockerfile.cross`）。
+- 其它辅助任务：`vet` / `test`（`server` 标签的静态检查与单测）、`generate:icons`、`update:build-assets`（改完 `build/config.yml` 后重新生成各平台构建资源）、`clean`、`doctor`。
 
 > `main.go` 用 `go:embed` 内嵌 `frontend/dist`，所以直接 `go build` 前要先有前端产物：`cd frontend && npm ci && npm run build`（`wails3 task build` 会自动按顺序做）。
 
@@ -98,18 +119,26 @@ internal/ocr/           验证码识别适配层（内部用 ddddocr-go）
 internal/grab/          自动抢座引擎（状态机 + 轮询 + 验证码通道）
 frontend/               Vue 3 界面（shadcn-vue + Tailwind v4，src/components/ui 为组件库）
                         src/assets/seu-logo.svg 是官方校标矢量图，界面与程序图标都用它
-build/                  Wails 构建配置：windows 打包、docker 镜像、图标与元信息
+build/                  Wails 构建配置：config.yml 元信息 + 各平台 Taskfile 与打包资源
+                        windows/ darwin/ linux/ ios/ android/ docker/ 各是一个平台
 scripts/                逆向阶段的两个 Python 原始脚本（仅供对照，不参与构建）
-.github/                发布流程：打 tag 后自动构建四个产物并推送 Docker 镜像
+.github/                CI：ci.yml 全平台编译检查，release.yml 打 tag 自动发版
 ```
 
 前端调用 Go 的 TypeScript 绑定由 `wails3 generate bindings` 生成到 `frontend/bindings/`，构建时自动刷新。
 
 界面左上角、登录页、窗口图标与 favicon 使用的都是东南大学官方校标。程序图标与 favicon 由 `frontend/src/assets/seu-logo.svg`（彩色校标，来自学校视觉识别系统的矢量素材）渲染导出：`build/appicon.png`（1024×1024）、`frontend/public/favicon.png`（128×128）、`build/windows/icon.ico`（`wails3 generate icons` 生成）。校标版权归东南大学所有，这里只作为本工具的标识使用，如与学校的视觉识别规范冲突，以学校规范为准。
 
-## 发布
+## 持续集成与发布
 
-发布由 `.github/workflows/release.yml` 完成，两种触发方式：
+两套工作流：
+
+| 工作流 | 触发 | 做什么 |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | push 到 `main`、PR、手动 | 全平台编译检查：Windows（amd64/arm64）、macOS 通用二进制、Linux 桌面版 + deb、Linux 服务版（amd64/arm64）、Android APK、iOS 模拟器包、Docker 镜像启动自检；外加 `go vet` + `go test` |
+| `.github/workflows/release.yml` | 打 `v*` tag、手动 | 同上全部平台出正式产物 → 汇总校验和 → 创建 Release，并把 `linux/amd64` + `linux/arm64` 镜像推到 GHCR |
+
+发版：
 
 ```bash
 # 推荐：打 tag 推送，版本号取自 tag
@@ -117,34 +146,43 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-也可以在 Actions 页面手动运行「发布」：填写版本号会构建并创建 Release；版本号留空只构建产物、不发布（版本号记为 `0.0.0-dev-<短提交号>`）。
+也可以在 Actions 页面手动运行「发布」：填写版本号会构建并创建 Release；版本号留空只构建产物、不发布（版本号记为 `0.0.0-dev-<短提交号>`）。「发布」还可以勾选「生成 Windows NSIS 安装包」（更慢，日常绿色版不需要）。
 
-流程依次做四件事：解析版本号 → 检查（前端编译 + `go vet` + `go test`）→ 四个平台并行构建 → 创建 Release。产物如下：
+Release 里的产物：
 
 | 产物 | 平台 | 说明 |
 | --- | --- | --- |
-| `seuszjz.exe` | Windows | 桌面版，双击运行，无控制台窗口 |
-| `seuszjz-server.exe` | Windows | 服务版，命令行运行后浏览器访问 |
-| `seuszjz-server-linux-amd64.tar.gz` | Linux | 服务版（x86_64） |
-| `seuszjz-server-linux-arm64.tar.gz` | Linux | 服务版（ARM64） |
+| `seuszjz-windows-{amd64,arm64}.exe` | Windows | 桌面版，双击运行，无控制台窗口 |
+| `seuszjz-server-windows-{amd64,arm64}.exe` | Windows | 服务版，命令行运行后浏览器访问 |
+| `seuszjz-macos-universal.zip` / `.dmg` | macOS | 通用二进制（Apple Silicon + Intel），ad-hoc 签名 |
+| `seuszjz-server-darwin-{amd64,arm64}.tar.gz` | macOS | 服务版 |
+| `seuszjz-linux-amd64.tar.gz`、`seuszjz_*_amd64.deb`、`*.rpm`、`.AppImage` | Linux | 桌面版（需要 GTK4 + WebKitGTK 6.0；AppImage 失败不阻断发布） |
+| `seuszjz-server-linux-{amd64,arm64}.tar.gz` | Linux | 服务版（静态二进制，无图形依赖） |
+| `seuszjz-android.apk` / `.aab` | Android | APK 未配置 `ANDROID_KEYSTORE_*` secret 时用 debug 签名，可安装、不能上架 |
+| `seuszjz-ios-simulator.zip` | iOS | 模拟器包（ad-hoc 签名）；真机/上架需自己签名 |
+| `SHA256SUMS.txt` | — | 以上文件的 SHA-256 |
 
-同时构建 `linux/amd64` 与 `linux/arm64` 两个架构的镜像推到 GHCR：
+Docker 镜像（两个架构打在一个 manifest 里）：
 
 ```bash
 docker run -d -p 8080:8080 ghcr.io/only9464/seuszjz:latest
 ```
 
-版本号会写进三个地方，保证「设置页显示的版本 = tag」：`.github/scripts/set-version.py` 改写 `build/config.yml`、`build/windows/info.json`（exe 属性，四段式）、`frontend/package.json`；Go 侧的 `main.Version` 由构建参数 `APP_VERSION` 通过 `-ldflags "-X main.Version=..."` 注入（Dockerfile 里是 `--build-arg APP_VERSION=...`）。本地想模拟发布构建：
+版本号只维护一处：`.github/scripts/set-version.py <版本>` 会改写 `build/config.yml`、`build/windows/info.json`（exe 属性，四段式）、`build/darwin|ios` 的 `Info.plist`、`build/linux/nfpm/nfpm.yaml` 和前端 `package.json` / `package-lock.json`（Android 的 `versionName` / `versionCode` 由 Gradle 直接读 `build/config.yml`）。Go 侧的 `main.Version` 由构建参数 `APP_VERSION` 通过 `-ldflags "-X main.Version=..."` 注入（Dockerfile 里是 `--build-arg APP_VERSION=...`）。本地想模拟发布构建：
 
 ```bash
-APP_VERSION=1.2.3 wails3 task build        # 桌面版
-APP_VERSION=1.2.3 wails3 task build:server # 服务版
+APP_VERSION=1.2.3 wails3 task windows:build         # Windows 桌面版
+APP_VERSION=1.2.3 wails3 task darwin:package        # macOS .app
+APP_VERSION=1.2.3 wails3 task linux:package         # Linux deb/rpm/AppImage
+APP_VERSION=1.2.3 wails3 task android:package       # Android APK
+APP_VERSION=1.2.3 wails3 task build:server          # 服务器版
 ```
 
-两条与仓库设置有关的提醒：
+三条与仓库设置有关的提醒：
 
 - Actions 的默认工作流权限是只读，工作流里已经自带 `permissions: contents: write / packages: write`，不需要额外改仓库设置。
 - 第一次推送镜像后，GHCR 上的包默认是 **private**，需要在仓库右侧 Packages 里把它改成 public，否则别人拉取要先登录。
+- 想给 Android 出正式签名包，往仓库里加 `ANDROID_KEYSTORE_FILE` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` 四个 secret（keystore 文件建议 base64 后写进 workflow 再解码）；没配就走 debug 签名。
 
 ## 数据与隐私
 

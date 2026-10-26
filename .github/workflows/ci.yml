@@ -1,0 +1,234 @@
+name: 构建检查
+
+# 每次 push 到 main / PR 都把所有平台的编译跑一遍，确认全平台可用。
+# 不发布任何东西（Release / 镜像都在 release.yml 里）。
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WAILS_VERSION: v3.0.0-beta.34
+
+jobs:
+  check:
+    name: 检查（前端 + vet + 单测）
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 静态检查与单元测试
+        run: |
+          go vet -tags server ./...
+          go test -tags server ./...
+
+  windows:
+    name: Windows 桌面版（amd64 + arm64）
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+        with:
+          wails-version: ${{ env.WAILS_VERSION }}
+          install-wails: 'true'
+
+      - name: 构建桌面版
+        shell: bash
+        env:
+          APP_VERSION: 0.0.0-ci
+        run: wails3 task windows:build ARCH=${{ matrix.arch }}
+
+      - name: 构建服务版
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+          APP_VERSION: 0.0.0-ci
+        run: |
+          go build -tags server,production -trimpath -buildvcs=false \
+            -ldflags="-s -w -X main.Version=${APP_VERSION}" -o bin/seuszjz-server.exe .
+
+  macos:
+    name: macOS 通用二进制
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+        with:
+          wails-version: ${{ env.WAILS_VERSION }}
+          install-wails: 'true'
+
+      - name: 构建 .app（arm64 + amd64 → lipo 通用二进制）
+        env:
+          APP_VERSION: 0.0.0-ci
+        run: wails3 task darwin:package:universal
+
+      - name: 编译服务版（darwin amd64/arm64）
+        env:
+          CGO_ENABLED: '0'
+          APP_VERSION: 0.0.0-ci
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=darwin GOARCH=$arch go build -tags server,production -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.Version=${APP_VERSION}" -o bin/seuszjz-server-darwin-${arch} .
+          done
+
+  linux-desktop:
+    name: Linux 桌面版
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+        with:
+          wails-version: ${{ env.WAILS_VERSION }}
+          install-wails: 'true'
+          install-gtk: 'true'
+
+      - name: 构建
+        env:
+          APP_VERSION: 0.0.0-ci
+        run: wails3 task linux:build
+
+      - name: 打 deb 包
+        run: |
+          wails3 task linux:generate:dotdesktop
+          wails3 task linux:generate:deb
+          ls -l bin
+
+  linux-server:
+    name: Linux 服务版（${{ matrix.arch }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 交叉编译
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+          APP_VERSION: 0.0.0-ci
+        run: |
+          name="seuszjz-server-linux-${{ matrix.arch }}"
+          go build -tags server,production -trimpath -buildvcs=false \
+            -ldflags="-s -w -X main.Version=${APP_VERSION}" -o "out/${name}" .
+          tar -czf "out/${name}.tar.gz" -C out "${name}"
+          ls -l out
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+        with:
+          wails-version: ${{ env.WAILS_VERSION }}
+          install-wails: 'true'
+          install-gtk: 'true'
+          install-android: 'true'
+
+      - name: 构建 release APK（arm64）
+        env:
+          APP_VERSION: 0.0.0-ci
+        run: wails3 task android:package
+
+      - name: 产物
+        run: ls -l bin
+
+  ios:
+    name: iOS .app（模拟器）
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+        with:
+          wails-version: ${{ env.WAILS_VERSION }}
+          install-wails: 'true'
+
+      - name: 构建 iOS .app（模拟器 + ad-hoc 签名）
+        env:
+          APP_VERSION: 0.0.0-ci
+        run: wails3 task ios:package
+
+      - name: 产物
+        run: |
+          ls -l bin
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "bin/seuszjz.app/Info.plist"
+
+  docker:
+    name: Docker 镜像（不推送）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 构建镜像
+        run: |
+          docker build -f build/docker/Dockerfile.server \
+            --build-arg APP_VERSION=0.0.0-ci -t seuszjz:ci .
+          docker run --rm -d --name seuszjz-ci -p 18080:8080 seuszjz:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/ > /dev/null; then echo "服务已就绪"; break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:18080/
+          docker logs seuszjz-ci
+          docker rm -f seuszjz-ci

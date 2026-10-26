@@ -2,6 +2,7 @@
 .task/
 bin/
 build/bin/
+out/
 wails_windows_*.syso
 *.exe
 *.log
@@ -9,6 +10,24 @@ wails_windows_*.syso
 # 前端
 frontend/dist/
 frontend/node_modules/
+
+# iOS / Android 生成物 (wails3 ios xcode:gen, android overlay:gen 产生)
+build/ios/xcode/
+build/android/overlay.json
+build/android/gen/
+build/android/.gradle/
+build/android/app/build/
+build/android/app/src/main/jniLibs/
+build/android/local.properties
+
+# Linux 打包中间文件
+build/linux/*.desktop
+build/linux/build/
+build/linux/appimage/build/
+
+# Windows 安装包中间文件 / WebView2 引导程序
+build/windows/nsis/*.exe
+build/windows/nsis/*.nsh.bak
 
 # Python 逆向脚本的缓存
 __pycache__/
@@ -19,4 +38,3 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
-build/icon.icns

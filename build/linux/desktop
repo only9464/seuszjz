@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=东南大学讲座助手
+Comment=东南大学素质讲座预约助手
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/seuszjz %u
+Terminal=false
+Type=Application
+Icon=seuszjz
+Categories=Utility;
+StartupWMClass=seuszjz
+
+ 

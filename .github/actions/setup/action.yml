@@ -1,5 +1,5 @@
 name: 准备构建环境
-description: 安装 Go、Node.js（必要时还有 wails3），供发布流程的各平台任务复用。
+description: 安装 Go、Node.js、可选的 wails3 与各平台原生依赖，供 CI / 发布流程的所有任务复用。
 
 inputs:
   wails-version:
@@ -7,7 +7,19 @@ inputs:
     required: false
     default: v3.0.0-beta.34
   install-wails:
-    description: 是否安装 wails3。只有 Windows 构建需要它；Linux 上编译 wails3 要求 GTK4/WebKitGTK 开发包，服务版构建用不到，所以默认不装。
+    description: 是否安装 wails3 命令行（桌面/移动平台构建需要；纯 server 二进制不需要）
+    required: false
+    default: 'false'
+  install-gtk:
+    description: Linux 上安装 GTK4 + WebKitGTK 6.0 开发包（编译 wails3 与 Linux 桌面版必需）
+    required: false
+    default: 'false'
+  install-android:
+    description: 安装 Android SDK / NDK / JDK（Android 构建需要）
+    required: false
+    default: 'false'
+  install-nsis:
+    description: Windows 上安装 NSIS（生成安装包时需要）
     required: false
     default: 'false'
 
@@ -27,13 +39,62 @@ runs:
         cache: npm
         cache-dependency-path: frontend/package-lock.json
 
+    # 编译 wails3 本身（CGO）和 Linux 桌面版都需要这两个开发包。
+    - name: 安装 Linux 图形库开发包（GTK4 + WebKitGTK 6.0）
+      if: inputs.install-gtk == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          pkg-config build-essential \
+          libgtk-4-dev libwebkitgtk-6.0-dev
+        pkg-config --exists gtk4 && pkg-config --exists webkitgtk-6.0
+        echo "gtk4 $(pkg-config --modversion gtk4) / webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0)"
+
+    - name: 安装 JDK 21
+      if: inputs.install-android == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - name: 安装 Android SDK / NDK
+      if: inputs.install-android == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+        if [ -z "$SDK_ROOT" ]; then
+          SDK_ROOT=/usr/local/lib/android/sdk
+        fi
+        SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+        if [ ! -x "$SDKMANAGER" ]; then
+          SDKMANAGER="$(command -v sdkmanager)"
+        fi
+        echo "SDK: $SDK_ROOT"
+        echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+        echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+        yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+        "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973" > /dev/null
+        echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+        echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+        echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+        ls "$SDK_ROOT/ndk"
+        java -version
+
+    - name: 安装 NSIS
+      if: inputs.install-nsis == 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install nsis --no-progress -y
+        echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
     - name: 缓存 wails3
       if: inputs.install-wails == 'true'
       id: cache-wails
       uses: actions/cache@v4
       with:
         path: .gobin
-        key: wails3-${{ inputs.wails-version }}-${{ runner.os }}
+        key: wails3-${{ inputs.wails-version }}-${{ runner.os }}-${{ runner.arch }}
 
     - name: 安装 wails3
       if: inputs.install-wails == 'true' && steps.cache-wails.outputs.cache-hit != 'true'
@@ -49,3 +110,11 @@ runs:
         mkdir -p "$GITHUB_WORKSPACE/.gobin"
         echo "$GITHUB_WORKSPACE/.gobin" >> "$GITHUB_PATH"
         "$GITHUB_WORKSPACE/.gobin/wails3" version
+
+    - name: 环境信息
+      shell: bash
+      run: |
+        go version
+        node --version
+        npm --version
+        echo "runner: $RUNNER_OS / $RUNNER_ARCH"

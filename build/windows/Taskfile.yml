@@ -1,14 +1,16 @@
 version: '3'
 
-# Windows 桌面版构建。只产出 bin/seuszjz.exe (单文件、双击即用),
-# 不做 MSIX / NSIS 安装包 —— 本项目的发布形态就是绿色单文件。
+# Windows 桌面版构建。
+#   默认产出 bin/seuszjz.exe —— 单文件、双击即用、无控制台窗口 (绿色版)。
+#   安装包是可选的: wails3 task windows:package (需要 makensis: choco install nsis)
+#   MSIX 需要 Windows SDK 与签名证书, 本项目不发布 MSIX, 故不提供。
 
 includes:
   common: ../Taskfile.yml
 
 tasks:
   build:
-    summary: 构建 Windows 桌面版
+    desc: 构建 Windows 桌面版 (ARCH=amd64|arm64, 默认本机架构)
     deps:
       - task: build:native
         vars:
@@ -19,7 +21,7 @@ tasks:
           GARBLE_ARGS: '{{.GARBLE_ARGS}}'
 
   build:native:
-    summary: 本机 Go 交叉编译 Windows 可执行文件
+    desc: 本机 Go 交叉编译 Windows 可执行文件 (纯 Go, 不需要 CGO)
     internal: true
     deps:
       - task: common:go:mod:tidy
@@ -45,6 +47,7 @@ tasks:
       - cmd: rm -f *.syso
         platforms: [linux, darwin]
     vars:
+      # 发布版注入 -X main.Version=APP_VERSION, 并带 -H windowsgui 隐藏控制台。
       BUILD_FLAGS: '{{if eq .DEV "true"}}{{if or .EXTRA_TAGS (eq .OBFUSCATED "true")}}-tags {{if eq .OBFUSCATED "true"}}wails_obfuscated{{if .EXTRA_TAGS}},{{end}}{{end}}{{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all="-l"{{else}}-tags production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui{{if .APP_VERSION}} -X main.Version={{.APP_VERSION}}{{end}}"{{end}}'
     env:
       GOOS: windows
@@ -52,14 +55,88 @@ tasks:
       GOARCH: '{{.ARCH | default ARCH}}'
 
   generate:syso:
-    summary: 生成 Windows 资源(.syso)
+    desc: "生成 Windows 资源文件 .syso（图标 + manifest + 版本信息）"
     dir: build
     cmds:
       - wails3 generate syso -arch {{.ARCH}} -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../wails_windows_{{.ARCH}}.syso
     vars:
       ARCH: '{{.ARCH | default ARCH}}'
 
+  # ---- 分发形态 ----
+  package:
+    desc: 生成 NSIS 安装包 (需要 makensis)
+    cmds:
+      - task: create:nsis:installer
+        vars:
+          INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
+          ARCH: '{{.ARCH}}'
+    vars:
+      INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
+
+  package:zip:
+    desc: 把 exe 打成 zip (绿色版, CI 用, 不依赖 NSIS)
+    deps:
+      - task: build
+    cmds:
+      - cmd: >-
+          powershell -NoProfile -Command "Compress-Archive -Force
+          -Path '{{.BIN_DIR}}/{{.APP_NAME}}.exe'
+          -DestinationPath '{{.BIN_DIR}}/{{.APP_NAME}}-windows-{{.ARCH | default ARCH}}.zip'"
+        platforms: [windows]
+      - cmd: zip -j "{{.BIN_DIR}}/{{.APP_NAME}}-windows-{{.ARCH | default ARCH}}.zip" "{{.BIN_DIR}}/{{.APP_NAME}}.exe"
+        platforms: [linux, darwin]
+
+  create:nsis:installer:
+    desc: 用 NSIS 生成安装包
+    dir: build/windows/nsis
+    deps:
+      - task: build
+        vars:
+          ARCH: '{{.ARCH}}'
+    preconditions:
+      - sh: '{{if eq .INSTALL_SCOPE "user"}}true{{else if eq .INSTALL_SCOPE "machine"}}true{{else}}false{{end}}'
+        msg: "INSTALL_SCOPE 只能是 user 或 machine, 当前: {{.INSTALL_SCOPE}}"
+      - sh: 'command -v makensis > /dev/null 2>&1 || [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]'
+        msg: "未找到 makensis, 请先安装 NSIS: choco install nsis / brew install makensis / apt install nsis"
+    cmds:
+      # 下载 WebView2 引导程序, 没有 WebView2 运行时的 Windows 才有安装条件
+      - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
+      - |
+        MAKENSIS="$(command -v makensis || echo '/c/Program Files (x86)/NSIS/makensis.exe')"
+        SCOPE_FLAGS=""
+        if [ "{{.INSTALL_SCOPE}}" = "user" ]; then
+          SCOPE_FLAGS="-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user"
+        fi
+        STATUS=0
+        "$MAKENSIS" $SCOPE_FLAGS -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi || STATUS=$?
+        if [ $STATUS -ne 0 ]; then
+          # macOS/Linux 上的 makensis 需要正斜杠路径, 再来一次
+          "$MAKENSIS" $SCOPE_FLAGS -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" project.nsi
+        fi
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+      ARG_FLAG: '{{if eq .ARCH "amd64"}}AMD64{{else}}ARM64{{end}}'
+      INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
+
+  # ---- 代码签名 (需要证书; 未配置时这些任务不用跑) ----
+  sign:
+    desc: 给 exe 做 Authenticode 签名
+    summary: |
+      证书可通过 build/windows/Taskfile.yml 顶部的 SIGN_CERTIFICATE / SIGN_THUMBPRINT 指定,
+      或用 `wails3 setup signing` 保存到系统钥匙串。
+    deps:
+      - task: build
+    cmds:
+      - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_NAME}}.exe" {{if .SIGN_CERTIFICATE}}--certificate "{{.SIGN_CERTIFICATE}}"{{end}} {{if .SIGN_THUMBPRINT}}--thumbprint "{{.SIGN_THUMBPRINT}}"{{end}} {{if .TIMESTAMP_SERVER}}--timestamp "{{.TIMESTAMP_SERVER}}"{{end}}
+
+  sign:installer:
+    desc: 给 NSIS 安装包签名
+    deps:
+      - task: create:nsis:installer
+    cmds:
+      - wails3 tool sign --input "build/windows/nsis/{{.APP_NAME}}-{{.ARCH | default ARCH}}-installer.exe" {{if .SIGN_CERTIFICATE}}--certificate "{{.SIGN_CERTIFICATE}}"{{end}} {{if .SIGN_THUMBPRINT}}--thumbprint "{{.SIGN_THUMBPRINT}}"{{end}} {{if .TIMESTAMP_SERVER}}--timestamp "{{.TIMESTAMP_SERVER}}"{{end}}
+
   run:
-    summary: 运行已构建的桌面版
+    desc: 运行已构建的桌面版
     cmds:
       - '{{.BIN_DIR}}/{{.APP_NAME}}.exe'

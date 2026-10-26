@@ -3,10 +3,13 @@
 
 用法: python set-version.py 1.2.3
 
-改动三处(发布流程里 Go 侧版本由 ldflags 注入, 不在这里改):
-  1. build/config.yml     info.version            —— Wails 构建信息
-  2. build/windows/info.json  四个版本字段(四段式) —— 嵌入 exe 属性
-  3. frontend/package.json 与 package-lock.json     —— 前端包版本
+改动这些地方(发布流程里 Go 侧版本由 ldflags 注入, 不在这里改):
+  1. build/config.yml          info.version            —— Wails 构建信息(单一真源)
+  2. build/windows/info.json   四个版本字段(四段式)    —— 嵌入 exe 属性
+  3. build/darwin|ios 的 Info.plist / Info.dev.plist    —— macOS / iOS 包版本
+  4. build/linux/nfpm/nfpm.yaml version                 —— deb/rpm 包版本
+  5. frontend/package.json 与 package-lock.json         —— 前端包版本
+  (Android 的 versionName/versionCode 由 gradle 直接读 build/config.yml, 无需改动)
 
 Windows 的 exe 属性只认四段式版本号(如 1.2.3.0), 三段式会被完全忽略,
 所以这里统一补一段 0; 预发布后缀(-beta.1)只保留在 semver 字符串里。
@@ -18,6 +21,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# macOS / iOS 的应用包 plist, 存在才改。
+PLIST_FILES = (
+    "build/darwin/Info.plist",
+    "build/darwin/Info.dev.plist",
+    "build/ios/Info.plist",
+    "build/ios/Info.dev.plist",
+)
 
 
 def read(path: Path) -> str:
@@ -87,6 +98,43 @@ def update_package_lock(version: str) -> str:
     return f"frontend/package-lock.json  本包 version -> {version} ({count} 处)"
 
 
+def update_plists(version: str) -> str:
+    """改 macOS / iOS 包里的 CFBundleShortVersionString 与 CFBundleVersion。"""
+    results = []
+    pattern = re.compile(
+        r"(<key>CFBundle(?:ShortVersionString|Version)</key>\s*<string>)[^<]*(</string>)"
+    )
+    for rel in PLIST_FILES:
+        path = ROOT / rel
+        if not path.exists():
+            continue
+        text = read(path)
+        new_text, count = pattern.subn(lambda m: m.group(1) + version + m.group(2), text)
+        if count:
+            write(path, new_text)
+            results.append(f"{rel} ({count} 处)")
+    if not results:
+        return "Info.plist  没有需要改的文件, 跳过"
+    return "Info.plist  版本号 -> " + ", ".join(results)
+
+
+def update_nfpm(version: str) -> str:
+    """改 Linux 打包配置里的 version(deb/rpm/AppImage 共用)。"""
+    path = ROOT / "build" / "linux" / "nfpm" / "nfpm.yaml"
+    if not path.exists():
+        return "build/linux/nfpm/nfpm.yaml  不存在, 跳过"
+    text = read(path)
+    new_text, count = re.subn(
+        r'(?m)^(version:\s*)"[^"]*"[ \t]*$',
+        lambda m: f'{m.group(1)}"{version}"',
+        text,
+    )
+    if count == 0:
+        return "build/linux/nfpm/nfpm.yaml  未找到 version 字段, 跳过"
+    write(path, new_text)
+    return f'build/linux/nfpm/nfpm.yaml  version -> "{version}" ({count} 处)'
+
+
 def main() -> int:
     # Windows 的 CI 里 stdout 默认是 cp1252，直接打印中文会 UnicodeEncodeError
     if hasattr(sys.stdout, "reconfigure"):
@@ -103,6 +151,8 @@ def main() -> int:
     for line in (
         update_config(version),
         update_info_json(version),
+        update_plists(version),
+        update_nfpm(version),
         update_package_json(version),
         update_package_lock(version),
     ):

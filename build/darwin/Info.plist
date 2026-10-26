@@ -1,0 +1,27 @@
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <dict>
+        <key>CFBundlePackageType</key>
+            <string>APPL</string>
+        <key>CFBundleName</key>
+            <string>东南大学讲座助手</string>
+        <key>CFBundleExecutable</key>
+            <string>seuszjz</string>
+        <key>CFBundleIdentifier</key>
+            <string>com.seuszjz.lecture</string>
+        <key>CFBundleVersion</key>
+            <string>1.1.1</string>
+        <key>CFBundleGetInfoString</key>
+            <string>东南大学素质讲座预约助手</string>
+        <key>CFBundleShortVersionString</key>
+            <string>1.1.1</string>
+        <key>CFBundleIconFile</key>
+            <string>icons</string>
+        <key>LSMinimumSystemVersion</key>
+            <string>12.0.0</string>
+        <key>NSHighResolutionCapable</key>
+            <string>true</string>
+        <key>NSHumanReadableCopyright</key>
+            <string>Copyright (c) 2026 seuszjz contributors, MIT License</string>
+    </dict>
+</plist>
