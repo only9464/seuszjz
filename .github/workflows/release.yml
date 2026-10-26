@@ -502,15 +502,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 下载产物
+      # 只按名字挑自己的产物: docker 任务的 buildx 缓存也会挂在这次 run 的 artifacts 里,
+      # 用不带过滤的下载会因为那个不是 zip 而报 "Artifact download failed after 5 retries"。
+      - name: 下载产物（Windows）
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
+          pattern: 'windows-*'
+          merge-multiple: true
 
-      - name: 整理产物并生成校验和
+      - name: 下载产物（Linux）
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: 'linux-*'
+          merge-multiple: true
+
+      - name: 下载产物（macOS）
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: 'macos'
+          merge-multiple: true
+
+      - name: 下载产物（Android）
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: 'android'
+          merge-multiple: true
+
+      - name: 下载产物（iOS）
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: 'ios'
+          merge-multiple: true
+
+      - name: 生成校验和
         run: |
-          mkdir -p dist
-          find artifacts -type f -exec cp {} dist/ \;
           cd dist
           sha256sum * > SHA256SUMS.txt
           ls -l
