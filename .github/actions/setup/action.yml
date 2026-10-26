@@ -41,14 +41,17 @@ runs:
 
     # 编译 wails3 本身（CGO）和 Linux 桌面版都需要这两个开发包。
     # 注意: composite action 的步骤不支持 timeout-minutes, 这里用 `timeout` 兜住卡死的下载。
+    # GH 的 Ubuntu 镜像有时拉包很慢, 所以超时给到 25 分钟 + 重试。
     - name: 安装 Linux 图形库开发包（GTK4 + WebKitGTK 6.0）
       if: inputs.install-gtk == 'true' && runner.os == 'Linux'
       shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo timeout 300 apt-get update -o Acquire::Retries=3
-        sudo timeout 900 apt-get install -y --no-install-recommends \
-          -o Acquire::Retries=3 \
-          pkg-config build-essential \
+        APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Dpkg::Use-Pty=0"
+        sudo timeout 300 apt-get update $APT_OPTS
+        sudo timeout 1500 apt-get install -y --no-install-recommends $APT_OPTS \
+          pkg-config gcc libc6-dev \
           libgtk-4-dev libwebkitgtk-6.0-dev
         pkg-config --exists gtk4 && pkg-config --exists webkitgtk-6.0
         echo "gtk4 $(pkg-config --modversion gtk4) / webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0)"

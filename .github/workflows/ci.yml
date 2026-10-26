@@ -83,7 +83,7 @@ jobs:
   macos:
     name: macOS 通用二进制
     runs-on: macos-14
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -110,7 +110,7 @@ jobs:
   linux-desktop:
     name: Linux 桌面版
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
