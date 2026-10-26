@@ -40,13 +40,13 @@ runs:
         cache-dependency-path: frontend/package-lock.json
 
     # 编译 wails3 本身（CGO）和 Linux 桌面版都需要这两个开发包。
+    # 注意: composite action 的步骤不支持 timeout-minutes, 这里用 `timeout` 兜住卡死的下载。
     - name: 安装 Linux 图形库开发包（GTK4 + WebKitGTK 6.0）
       if: inputs.install-gtk == 'true' && runner.os == 'Linux'
       shell: bash
-      timeout-minutes: 15
       run: |
-        sudo apt-get update -o Acquire::Retries=3
-        sudo apt-get install -y --no-install-recommends \
+        sudo timeout 300 apt-get update -o Acquire::Retries=3
+        sudo timeout 900 apt-get install -y --no-install-recommends \
           -o Acquire::Retries=3 \
           pkg-config build-essential \
           libgtk-4-dev libwebkitgtk-6.0-dev
@@ -63,7 +63,6 @@ runs:
     - name: 安装 Android SDK / NDK
       if: inputs.install-android == 'true' && runner.os == 'Linux'
       shell: bash
-      timeout-minutes: 25
       run: |
         SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
         if [ -z "$SDK_ROOT" ]; then
@@ -76,14 +75,14 @@ runs:
         echo "SDK: $SDK_ROOT"
         echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
         echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-        yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-        "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+        yes | timeout 120 "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+        timeout 900 "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
         # 镜像里通常已经带了 NDK, 有就直接用, 免得为 1GB 的下载多等十几分钟。
         NDK_DIR=""
         if ls -d "$SDK_ROOT"/ndk/* > /dev/null 2>&1; then
           NDK_DIR="$(ls -d "$SDK_ROOT"/ndk/* | sort -V | tail -1)"
         else
-          "$SDKMANAGER" --install "ndk;27.0.12077973" > /dev/null
+          timeout 1200 "$SDKMANAGER" --install "ndk;27.0.12077973" > /dev/null
           NDK_DIR="$SDK_ROOT/ndk/27.0.12077973"
         fi
         echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
@@ -112,7 +111,7 @@ runs:
       shell: bash
       env:
         GOBIN: ${{ github.workspace }}/.gobin
-      run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ inputs.wails-version }}
+      run: timeout 1500 go install github.com/wailsapp/wails/v3/cmd/wails3@${{ inputs.wails-version }}
 
     - name: 把 wails3 加进 PATH
       if: inputs.install-wails == 'true'
