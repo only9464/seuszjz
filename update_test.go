@@ -82,6 +82,31 @@ func TestReleaseNotesFallsBackToBullets(t *testing.T) {
 	}
 }
 
+// 真实发布说明（v0.0.3）的结构：下载表格 + Docker 代码块 + 变更列表。
+// 更新弹窗里只应该出现「变更」里的条目。
+func TestReleaseNotesRealReleaseBody(t *testing.T) {
+	body := "东南大学讲座助手 v0.0.3\n\n" +
+		"## 下载\n\n" +
+		"| 文件 | 说明 |\n" +
+		"| --- | --- |\n" +
+		"| `seuszjz.exe` | Windows 桌面版，双击即可运行（无控制台窗口） |\n" +
+		"| `SHA256SUMS.txt` | 以上文件的 SHA-256 校验和 |\n\n" +
+		"## Docker\n\n" +
+		"```bash\n" +
+		"docker run -d --name seuszjz -p 8080:8080 ghcr.io/only9464/seuszjz:0.0.3\n" +
+		"```\n\n" +
+		"## 变更\n\n" +
+		"- fix(release): 1.1.1 —— 校园网登录修复 + 毕业要求检查\n"
+
+	notes := releaseNotes(body)
+	if len(notes) != 1 {
+		t.Fatalf("releaseNotes = %v, want 1 条", notes)
+	}
+	if notes[0] != "fix(release): 1.1.1 —— 校园网登录修复 + 毕业要求检查" {
+		t.Fatalf("notes[0] = %q", notes[0])
+	}
+}
+
 func TestUpdateServiceInfo(t *testing.T) {
 	svc := NewUpdateService(nil)
 	info := svc.Info()
