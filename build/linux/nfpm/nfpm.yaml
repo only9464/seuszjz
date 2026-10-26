@@ -6,7 +6,7 @@
 name: "seuszjz"
 arch: ${GOARCH}
 platform: "linux"
-version: "1.1.1"
+version: "0.0.4"
 section: "default"
 priority: "extra"
 maintainer: "seuszjz <seuszjz@users.noreply.github.com>"

@@ -10,11 +10,11 @@
         <key>CFBundleIdentifier</key>
             <string>com.seuszjz.lecture</string>
         <key>CFBundleVersion</key>
-            <string>1.1.1</string>
+            <string>0.0.4</string>
         <key>CFBundleGetInfoString</key>
             <string>东南大学素质讲座预约助手</string>
         <key>CFBundleShortVersionString</key>
-            <string>1.1.1</string>
+            <string>0.0.4</string>
         <key>CFBundleIconFile</key>
             <string>icons</string>
         <key>LSMinimumSystemVersion</key>

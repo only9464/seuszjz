@@ -63,18 +63,14 @@ tasks:
       ARCH: '{{.ARCH | default ARCH}}'
 
   # ---- 分发形态 ----
+  # 本项目的发布形态就是绿色单文件 exe, 不做 NSIS / MSIX 安装包。
   package:
-    desc: 生成 NSIS 安装包 (需要 makensis)
+    desc: 打包绿色版 zip (内含单个 exe, 解压即用)
     cmds:
-      - task: create:nsis:installer
-        vars:
-          INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
-          ARCH: '{{.ARCH}}'
-    vars:
-      INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
+      - task: package:zip
 
   package:zip:
-    desc: 把 exe 打成 zip (绿色版, CI 用, 不依赖 NSIS)
+    desc: 把 exe 打成 zip
     deps:
       - task: build
     cmds:
@@ -86,39 +82,7 @@ tasks:
       - cmd: zip -j "{{.BIN_DIR}}/{{.APP_NAME}}-windows-{{.ARCH | default ARCH}}.zip" "{{.BIN_DIR}}/{{.APP_NAME}}.exe"
         platforms: [linux, darwin]
 
-  create:nsis:installer:
-    desc: 用 NSIS 生成安装包
-    dir: build/windows/nsis
-    deps:
-      - task: build
-        vars:
-          ARCH: '{{.ARCH}}'
-    preconditions:
-      - sh: '{{if eq .INSTALL_SCOPE "user"}}true{{else if eq .INSTALL_SCOPE "machine"}}true{{else}}false{{end}}'
-        msg: "INSTALL_SCOPE 只能是 user 或 machine, 当前: {{.INSTALL_SCOPE}}"
-      - sh: 'command -v makensis > /dev/null 2>&1 || [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]'
-        msg: "未找到 makensis, 请先安装 NSIS: choco install nsis / brew install makensis / apt install nsis"
-    cmds:
-      # 下载 WebView2 引导程序, 没有 WebView2 运行时的 Windows 才有安装条件
-      - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
-      - |
-        MAKENSIS="$(command -v makensis || echo '/c/Program Files (x86)/NSIS/makensis.exe')"
-        SCOPE_FLAGS=""
-        if [ "{{.INSTALL_SCOPE}}" = "user" ]; then
-          SCOPE_FLAGS="-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user"
-        fi
-        STATUS=0
-        "$MAKENSIS" $SCOPE_FLAGS -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi || STATUS=$?
-        if [ $STATUS -ne 0 ]; then
-          # macOS/Linux 上的 makensis 需要正斜杠路径, 再来一次
-          "$MAKENSIS" $SCOPE_FLAGS -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" project.nsi
-        fi
-    vars:
-      ARCH: '{{.ARCH | default ARCH}}'
-      ARG_FLAG: '{{if eq .ARCH "amd64"}}AMD64{{else}}ARM64{{end}}'
-      INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
-
-  # ---- 代码签名 (需要证书; 未配置时这些任务不用跑) ----
+  # ---- 代码签名 (需要证书; 未配置时这个任务不用跑) ----
   sign:
     desc: 给 exe 做 Authenticode 签名
     summary: |
@@ -128,13 +92,6 @@ tasks:
       - task: build
     cmds:
       - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_NAME}}.exe" {{if .SIGN_CERTIFICATE}}--certificate "{{.SIGN_CERTIFICATE}}"{{end}} {{if .SIGN_THUMBPRINT}}--thumbprint "{{.SIGN_THUMBPRINT}}"{{end}} {{if .TIMESTAMP_SERVER}}--timestamp "{{.TIMESTAMP_SERVER}}"{{end}}
-
-  sign:installer:
-    desc: 给 NSIS 安装包签名
-    deps:
-      - task: create:nsis:installer
-    cmds:
-      - wails3 tool sign --input "build/windows/nsis/{{.APP_NAME}}-{{.ARCH | default ARCH}}-installer.exe" {{if .SIGN_CERTIFICATE}}--certificate "{{.SIGN_CERTIFICATE}}"{{end}} {{if .SIGN_THUMBPRINT}}--thumbprint "{{.SIGN_THUMBPRINT}}"{{end}} {{if .TIMESTAMP_SERVER}}--timestamp "{{.TIMESTAMP_SERVER}}"{{end}}
 
   run:
     desc: 运行已构建的桌面版

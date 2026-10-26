@@ -46,7 +46,7 @@ tasks:
       - task: "{{.GOOS}}:build"
 
   package:
-    desc: 打安装包 (windows:NSIS / darwin:.app+dmg / linux:deb+rpm+AppImage)
+    desc: 打安装包 (windows:绿色 zip / darwin:.app+dmg / linux:deb+rpm+AppImage)
     cmds:
       - task: "{{.GOOS}}:package"
 

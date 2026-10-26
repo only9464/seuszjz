@@ -13,7 +13,7 @@ info:
   description: "东南大学素质讲座预约助手"
   copyright: "Copyright (c) 2026 seuszjz contributors, MIT License"
   comments: "东南大学素质讲座预约助手"
-  version: "1.1.1"
+  version: "0.0.4"
 
 # iOS 工程生成 (wails3 ios xcode:gen / overlay:gen) 用的覆盖项;
 # 不填的字段回落到上面的 info 段。version 故意不填, 跟着 info.version 走。

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """把发布版本号写进仓库里所有声明版本的位置。
 
-用法: python set-version.py 1.2.3
+用法: python set-version.py 0.0.4
 
-改动这些地方(发布流程里 Go 侧版本由 ldflags 注入, 不在这里改):
+改动这些地方(发布流程里 Go 侧版本还会被 ldflags 覆盖, 但默认值也要同步):
   1. build/config.yml          info.version            —— Wails 构建信息(单一真源)
   2. build/windows/info.json   四个版本字段(四段式)    —— 嵌入 exe 属性
   3. build/darwin|ios 的 Info.plist / Info.dev.plist    —— macOS / iOS 包版本
   4. build/linux/nfpm/nfpm.yaml version                 —— deb/rpm 包版本
-  5. frontend/package.json 与 package-lock.json         —— 前端包版本
+  5. service.go               var Version               —— 不带 ldflags 构建时的默认版本
+  6. frontend/package.json 与 package-lock.json         —— 前端包版本
   (Android 的 versionName/versionCode 由 gradle 直接读 build/config.yml, 无需改动)
 
-Windows 的 exe 属性只认四段式版本号(如 1.2.3.0), 三段式会被完全忽略,
+Windows 的 exe 属性只认四段式版本号(如 0.0.4.0), 三段式会被完全忽略,
 所以这里统一补一段 0; 预发布后缀(-beta.1)只保留在 semver 字符串里。
 """
 
@@ -135,35 +136,21 @@ def update_nfpm(version: str) -> str:
     return f'build/linux/nfpm/nfpm.yaml  version -> "{version}" ({count} 处)'
 
 
-def three_part(version: str) -> str:
-    """1.2.3 -> 1.2.3; 1.2.3-beta.1 -> 1.2.3 (NSIS 的 VIProductVersion 会自己补 .0)。"""
-    base = re.split(r"[-+]", version, maxsplit=1)[0]
-    parts = [p for p in base.split(".") if p != ""][:3]
-    while len(parts) < 3:
-        parts.append("0")
-    return ".".join(parts)
-
-
-def update_nsis(version: str) -> str:
-    """改 NSIS 里的 INFO_PRODUCTVERSION。
-
-    nsis/project.nsi 里写的是 VIProductVersion "${INFO_PRODUCTVERSION}.0",
-    所以这里必须是三段式数字, 否则 makensis 会因为段数不对报错。
-    """
-    path = ROOT / "build" / "windows" / "nsis" / "wails_tools.nsh"
+def update_go_default(version: str) -> str:
+    """改 service.go 里 `var Version` 的默认值(不带 ldflags 构建时用它)。"""
+    path = ROOT / "service.go"
     if not path.exists():
-        return "build/windows/nsis/wails_tools.nsh  不存在, 跳过"
+        return "service.go  不存在, 跳过"
     text = read(path)
-    ver3 = three_part(version)
     new_text, count = re.subn(
-        r'(?m)^([ \t]*!define INFO_PRODUCTVERSION[ \t]+)"[^"]*"([ \t]*)$',
-        lambda m: f'{m.group(1)}"{ver3}"{m.group(2)}',
+        r'(?m)^(var Version = )"[^"]*"',
+        lambda m: f'{m.group(1)}"{version}"',
         text,
     )
     if count != 1:
-        return f"build/windows/nsis/wails_tools.nsh  期望 1 处 INFO_PRODUCTVERSION, 实际 {count} 处, 跳过"
+        return f"service.go  期望 1 处 Version, 实际 {count} 处, 跳过"
     write(path, new_text)
-    return f'build/windows/nsis/wails_tools.nsh  INFO_PRODUCTVERSION -> "{ver3}"'
+    return f'service.go  var Version -> "{version}"'
 
 
 def main() -> int:
@@ -184,7 +171,7 @@ def main() -> int:
         update_info_json(version),
         update_plists(version),
         update_nfpm(version),
-        update_nsis(version),
+        update_go_default(version),
         update_package_json(version),
         update_package_lock(version),
     ):

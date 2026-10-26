@@ -25,9 +25,6 @@ build/linux/*.desktop
 build/linux/build/
 build/linux/appimage/build/
 
-# Windows 安装包中间文件 / WebView2 引导程序
-build/windows/nsis/*.exe
-build/windows/nsis/*.nsh.bak
 
 # Python 逆向脚本的缓存
 __pycache__/

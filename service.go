@@ -21,7 +21,7 @@ import (
 //
 // 必须是变量而不是常量: 发布时由 CI 用 -ldflags "-X main.Version=1.2.3" 注入 git tag 对应的版本,
 // 本地 `wails3 task build` 不注入时用下面这个默认值。
-var Version = "1.1.1"
+var Version = "0.0.4"
 
 const (
 	loginTimeout = 150 * time.Second

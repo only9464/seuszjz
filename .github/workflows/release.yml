@@ -26,11 +26,6 @@ on:
         description: '版本号（如 1.2.3）。留空则只构建产物、不创建 Release；tag 推送时忽略此项。'
         required: false
         default: ''
-      windows-installer:
-        description: '是否额外生成 Windows NSIS 安装包（更慢）'
-        type: boolean
-        required: false
-        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -53,7 +48,6 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       sha: ${{ steps.v.outputs.sha }}
       publish: ${{ steps.v.outputs.publish }}
-      installer: ${{ steps.v.outputs.installer }}
     steps:
       - name: 计算版本号
         id: v
@@ -75,7 +69,6 @@ jobs:
           echo "tag=v$version"                >> "$GITHUB_OUTPUT"
           echo "sha=$GITHUB_SHA"              >> "$GITHUB_OUTPUT"
           echo "publish=$publish"             >> "$GITHUB_OUTPUT"
-          echo "installer=${{ inputs.windows-installer || 'false' }}" >> "$GITHUB_OUTPUT"
           echo "本次版本: v$version (发布: $publish)"
 
   # 发布前的门槛：前端能编译 + Go 能通过静态检查与单元测试
@@ -147,6 +140,10 @@ jobs:
           mkdir -p out
           cp bin/seuszjz.exe "out/seuszjz-windows-${{ matrix.arch }}.exe"
           cp bin/seuszjz-server.exe "out/seuszjz-server-windows-${{ matrix.arch }}.exe"
+          # 额外留一份 seuszjz.exe 别名，README 顶部的下载徽章直接指向这个文件名
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            cp bin/seuszjz.exe out/seuszjz.exe
+          fi
           ls -l out
 
       - uses: actions/upload-artifact@v4
@@ -156,46 +153,6 @@ jobs:
           if-no-files-found: error
 
   # Windows 安装包（可选，需要 NSIS）
-  windows-installer:
-    name: Windows 安装包（NSIS）
-    needs: [prepare, check]
-    if: needs.prepare.outputs.installer == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/setup
-        with:
-          wails-version: ${{ env.WAILS_VERSION }}
-          install-wails: 'true'
-          install-nsis: 'true'
-
-      - name: 写入版本号
-        shell: bash
-        run: python .github/scripts/set-version.py "${{ needs.prepare.outputs.version }}"
-
-      - name: 生成安装包
-        shell: bash
-        env:
-          APP_VERSION: ${{ needs.prepare.outputs.version }}
-        run: wails3 task windows:package ARCH=amd64
-
-      - name: 收集产物
-        shell: bash
-        run: |
-          mkdir -p out
-          cp build/windows/nsis/seuszjz-amd64-installer.exe out/ || \
-            cp build/windows/nsis/*installer*.exe out/seuszjz-windows-amd64-installer.exe
-          ls -l out
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer
-          path: out/*
-          if-no-files-found: error
-
-  # macOS：通用二进制 .app + dmg + 服务版
   macos:
     name: macOS
     needs: [prepare, check]
@@ -553,7 +510,7 @@ jobs:
           prev="$(git describe --tags --abbrev=0 'HEAD^' 2>/dev/null || true)"
           if [[ -n "$prev" ]]; then range="$prev..HEAD"; else range="HEAD"; fi
           {
-            echo "东南大学讲座助手 v${VERSION}"
+            echo "# v${VERSION}"
             echo
             echo "## 下载"
             echo
@@ -580,7 +537,7 @@ jobs:
             echo "## Docker"
             echo
             echo '```bash'
-            echo "docker run -d --name seuszjz -p 8080:8080 ghcr.io/only9464/seuszjz:${VERSION}"
+            echo "docker run -d --name seuszjz -p 8080:8080 ghcr.nju.edu.cn/only9464/seuszjz:${VERSION}"
             echo '```'
             echo
             echo "## 变更"
@@ -599,7 +556,7 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          args=(release create "$TAG" dist/* --title "东南大学讲座助手 v${VERSION}" --notes-file NOTES.md)
+          args=(release create "$TAG" dist/* --title "v${VERSION}" --notes-file NOTES.md)
           if [[ "$EVENT" != "push" ]]; then
             args+=(--target "$SHA")
           fi
