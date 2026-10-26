@@ -5,7 +5,13 @@ import * as SessionService from "../bindings/seuszjz/sessionservice.js";
 import * as LectureService from "../bindings/seuszjz/lectureservice.js";
 import * as GrabService from "../bindings/seuszjz/grabservice.js";
 import type { Settings, Status } from "../bindings/seuszjz/models.js";
-import type { Lecture, MyActivity, Notice, Result } from "../bindings/seuszjz/internal/seu/models.js";
+import type {
+  Lecture,
+  MyActivity,
+  Notice,
+  Requirement,
+  Result,
+} from "../bindings/seuszjz/internal/seu/models.js";
 import type { State as GrabState } from "../bindings/seuszjz/internal/grab/models.js";
 
 export type ViewKey = "lectures" | "mine" | "notices" | "grab" | "settings";
@@ -20,6 +26,7 @@ export const state = reactive({
   lectures: [] as Lecture[],
   mine: [] as MyActivity[],
   notices: [] as Notice[],
+  requirement: null as Requirement | null,
   serverTime: "",
   fetchedAt: "",
   loadingList: false,
@@ -395,6 +402,7 @@ export async function refresh(): Promise<void> {
     state.lectures = data.lectures ?? [];
     state.mine = data.mine ?? [];
     state.notices = data.notices ?? [];
+    state.requirement = data.requirement ?? null;
     state.serverTime = data.serverTime;
     state.fetchedAt = data.fetchedAt;
     // 用服务器时间校正本机时钟, 倒计时才准。

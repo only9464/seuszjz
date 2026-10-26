@@ -7,7 +7,6 @@ package seu
 import (
 	"crypto/tls"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -140,6 +139,13 @@ func NewSession(cfg Config) *Session {
 	}
 	// 注意: 关闭 HTTP/2。ehall 前面的网关在 h2 下会一直不返回响应头,
 	// 只有 HTTP/1.1 才能正常完成换票 (与浏览器/requests 的行为一致)。
+	//
+	// 拨号用自带的 dialer: ehall 在校园网里会解析出多个地址, 其中一部分连不通,
+	// net.Dialer 逐地址串行尝试会卡在坏地址上 (详见 dialer.go)。
+	var dialLog func(string, ...any)
+	if cfg.Debug {
+		dialLog = cfg.Logf
+	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:     false,
@@ -148,10 +154,7 @@ func NewSession(cfg Config) *Session {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   20 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   20 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext:           newDialer(dialLog).DialContext,
 	}
 	return &Session{
 		cfg: cfg,

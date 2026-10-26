@@ -171,6 +171,71 @@ export interface Notice {
 }
 
 /**
+ * Requirement 是毕业要求的完成情况, 由「我的预约」列表计算得出。
+ */
+export interface Requirement {
+    /**
+     * 需要 8 次
+     */
+    "totalNeed": number;
+
+    /**
+     * 素养系列里已打卡的次数
+     */
+    "totalDone": number;
+
+    /**
+     * 还差几次
+     */
+    "totalMissing": number;
+
+    /**
+     * 已预约但讲座还没结束, 尚未打卡
+     */
+    "pending": number;
+
+    /**
+     * 素养系列里违约的次数
+     */
+    "defaulted": number;
+
+    /**
+     * 已打卡但不属于素养系列, 不计入
+     */
+    "ignored": number;
+
+    /**
+     * 三类必修讲座
+     */
+    "categories": RequirementItem[] | null;
+}
+
+/**
+ * RequirementItem 是某一必修类别的完成情况。
+ */
+export interface RequirementItem {
+    /**
+     * 法律 / 艺术 / 心理健康
+     */
+    "name": string;
+
+    /**
+     * 该类别需要几场 (恒为 1)
+     */
+    "need": number;
+
+    /**
+     * 已打卡几场
+     */
+    "done": number;
+
+    /**
+     * 还差几场
+     */
+    "missing": number;
+}
+
+/**
  * Result 是预约/取消这类业务操作的结果。
  */
 export interface Result {

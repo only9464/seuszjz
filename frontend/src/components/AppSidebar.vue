@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from "vue";
-import { logout, state, type ViewKey } from "../store";
+import { logout, saveSettings, state, type ViewKey } from "../store";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { Bell, Bookmark, CalendarDays, LogOut, Settings, Zap } from "@lucide/vue";
+import { Bell, Bookmark, CalendarDays, LogOut, Moon, Settings, Sun, Zap } from "@lucide/vue";
 import BrandMark from "./BrandMark.vue";
 
 interface NavItem {
@@ -43,6 +43,13 @@ const initials = computed(() => {
 const displayName = computed(
   () => state.status?.user?.displayName || state.status?.user?.username || "未登录",
 );
+
+// 主题切换放在侧边栏底部: 设置页里要跳一层才能改外观, 太绕。
+const light = computed(() => state.settings?.theme === "light");
+
+async function toggleTheme(): Promise<void> {
+  await saveSettings({ theme: light.value ? "dark" : "light" });
+}
 
 async function signOut(): Promise<void> {
   await logout();
@@ -94,6 +101,15 @@ async function signOut(): Promise<void> {
             {{ state.status?.user?.username || "—" }}
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          :title="light ? '切换到深色主题' : '切换到浅色主题'"
+          @click="toggleTheme"
+        >
+          <Sun v-if="light" />
+          <Moon v-else />
+        </Button>
         <Button variant="ghost" size="icon-sm" title="退出登录" @click="signOut">
           <LogOut />
         </Button>

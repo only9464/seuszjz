@@ -46,6 +46,8 @@ type Overview struct {
 	Lectures   []seu.Lecture    `json:"lectures"`
 	Mine       []seu.MyActivity `json:"mine"`
 	Notices    []seu.Notice     `json:"notices"`
+	// Requirement 是根据「我的预约」算出的毕业要求完成情况。
+	Requirement seu.Requirement `json:"requirement"`
 }
 
 // LoginResult 是登录结果。

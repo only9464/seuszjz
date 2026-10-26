@@ -5,6 +5,8 @@ export type {
     Lecture,
     MyActivity,
     Notice,
+    Requirement,
+    RequirementItem,
     Result,
     UserInfo
 } from "./models.js";

@@ -56,6 +56,10 @@
   --color-status-bad: var(--status-bad);
   --color-status-bad-fg: var(--status-bad-fg);
   --color-status-bad-border: var(--status-bad-border);
+
+  /* 毕业要求汇总面板: 需要和白色的记录卡明显分开, muted 的白灰不够用 */
+  --color-requirement-panel: var(--requirement-panel);
+  --color-requirement-panel-border: var(--requirement-panel-border);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -117,6 +121,10 @@
   --status-bad: oklch(0.965 0.035 25);
   --status-bad-fg: oklch(0.5 0.12 25.5);
   --status-bad-border: oklch(0.9 0.055 25);
+
+  /* 浅色下比 muted(#f5f5f5) 深一档, 在白卡片上能直接看出是"另一块面板" */
+  --requirement-panel: oklch(0.925 0.004 250);
+  --requirement-panel-border: oklch(0.87 0.006 250);
   --input: oklch(0.905 0 0);
   --ring: oklch(0.6 0 0);
   --chart-1: oklch(0.87 0 0);
@@ -174,6 +182,10 @@
   --status-bad: oklch(0.28 0.05 25);
   --status-bad-fg: oklch(0.85 0.12 25);
   --status-bad-border: oklch(0.4 0.06 25);
+
+  /* 暗色下比卡片(0.172)略亮的冷灰, 保持"浮起一层"的观感 */
+  --requirement-panel: oklch(0.215 0.005 250);
+  --requirement-panel-border: oklch(1 0 0 / 14%);
   --input: oklch(1 0 0 / 16%);
   --ring: oklch(0.62 0 0);
   --chart-1: oklch(0.9 0 0);

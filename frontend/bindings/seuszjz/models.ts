@@ -63,6 +63,11 @@ export interface Overview {
     "lectures": seu$0.Lecture[] | null;
     "mine": seu$0.MyActivity[] | null;
     "notices": seu$0.Notice[] | null;
+
+    /**
+     * Requirement 是根据「我的预约」算出的毕业要求完成情况。
+     */
+    "requirement": seu$0.Requirement;
 }
 
 /**

@@ -40,10 +40,7 @@ const autoCaptcha = computed({
   set: (value: boolean) => void saveSettings({ autoCaptcha: value }),
 });
 
-const theme = computed({
-  get: () => settings.value?.theme ?? "dark",
-  set: (value: string) => void saveSettings({ theme: value }),
-});
+
 
 const interval = ref(settings.value?.interval ?? 3);
 const cooldown = ref(settings.value?.cooldown ?? 300);
@@ -174,29 +171,7 @@ function saveCooldown(): void {
           </CardContent>
         </Card>
 
-        <Card class="gap-0 py-0">
-          <CardHeader class="px-4 pt-4 pb-2">
-            <CardTitle class="text-sm">外观</CardTitle>
-            <CardDescription class="text-xs">黑白配色，跟随系统或手动切换</CardDescription>
-          </CardHeader>
-          <CardContent class="px-4 pb-4">
-            <div class="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5">
-              <div class="space-y-0.5">
-                <p class="text-xs font-medium">主题</p>
-                <p class="text-[11px] text-muted-foreground">深色为近黑，浅色为纯白</p>
-              </div>
-              <Select v-model="theme">
-                <SelectTrigger class="h-8 w-24 text-xs" size="sm">
-                  <SelectValue placeholder="深色" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="dark">深色</SelectItem>
-                  <SelectItem value="light">浅色</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
+
 
         <Card class="gap-0 py-0">
           <CardHeader class="px-4 pt-4 pb-2">

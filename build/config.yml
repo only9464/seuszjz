@@ -10,7 +10,7 @@ info:
   description: "东南大学素质讲座预约助手"
   copyright: "Copyright (c) 2026 seuszjz contributors, MIT License"
   comments: "东南大学素质讲座预约助手"
-  version: "1.1.0"
+  version: "1.1.1"
 
 # 开发模式: 改动 Go 文件后自动重编并重启; 前端由 Vite 热更新, 不在此监听。
 dev_mode:
