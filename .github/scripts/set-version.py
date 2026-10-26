@@ -135,6 +135,37 @@ def update_nfpm(version: str) -> str:
     return f'build/linux/nfpm/nfpm.yaml  version -> "{version}" ({count} 处)'
 
 
+def three_part(version: str) -> str:
+    """1.2.3 -> 1.2.3; 1.2.3-beta.1 -> 1.2.3 (NSIS 的 VIProductVersion 会自己补 .0)。"""
+    base = re.split(r"[-+]", version, maxsplit=1)[0]
+    parts = [p for p in base.split(".") if p != ""][:3]
+    while len(parts) < 3:
+        parts.append("0")
+    return ".".join(parts)
+
+
+def update_nsis(version: str) -> str:
+    """改 NSIS 里的 INFO_PRODUCTVERSION。
+
+    nsis/project.nsi 里写的是 VIProductVersion "${INFO_PRODUCTVERSION}.0",
+    所以这里必须是三段式数字, 否则 makensis 会因为段数不对报错。
+    """
+    path = ROOT / "build" / "windows" / "nsis" / "wails_tools.nsh"
+    if not path.exists():
+        return "build/windows/nsis/wails_tools.nsh  不存在, 跳过"
+    text = read(path)
+    ver3 = three_part(version)
+    new_text, count = re.subn(
+        r'(?m)^([ \t]*!define INFO_PRODUCTVERSION[ \t]+)"[^"]*"([ \t]*)$',
+        lambda m: f'{m.group(1)}"{ver3}"{m.group(2)}',
+        text,
+    )
+    if count != 1:
+        return f"build/windows/nsis/wails_tools.nsh  期望 1 处 INFO_PRODUCTVERSION, 实际 {count} 处, 跳过"
+    write(path, new_text)
+    return f'build/windows/nsis/wails_tools.nsh  INFO_PRODUCTVERSION -> "{ver3}"'
+
+
 def main() -> int:
     # Windows 的 CI 里 stdout 默认是 cp1252，直接打印中文会 UnicodeEncodeError
     if hasattr(sys.stdout, "reconfigure"):
@@ -153,6 +184,7 @@ def main() -> int:
         update_info_json(version),
         update_plists(version),
         update_nfpm(version),
+        update_nsis(version),
         update_package_json(version),
         update_package_lock(version),
     ):
