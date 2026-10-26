@@ -334,6 +334,7 @@ jobs:
         with:
           wails-version: ${{ env.WAILS_VERSION }}
           install-wails: 'true'
+          install-gtk-runtime: 'true'
           install-android: 'true'
 
       - name: 写入版本号
