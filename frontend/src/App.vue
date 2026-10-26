@@ -65,27 +65,28 @@ onMounted(() => {
     <AppSidebar />
 
     <SidebarInset class="h-full min-w-0 overflow-hidden">
-      <header class="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+      <header class="flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:gap-3 sm:px-4">
         <SidebarTrigger class="-ml-1.5" />
         <div class="min-w-0 flex-1 leading-tight">
           <h1 class="truncate text-sm font-semibold tracking-tight">{{ meta.title }}</h1>
-          <p class="truncate text-xs text-muted-foreground">{{ meta.hint }}</p>
+          <p class="hidden truncate text-xs text-muted-foreground sm:block">{{ meta.hint }}</p>
         </div>
 
-        <Badge v-if="state.grab?.running" variant="outline" class="gap-1.5">
+        <Badge v-if="state.grab?.running" variant="outline" class="shrink-0 gap-1.5">
           <span class="size-1.5 rounded-full bg-foreground animate-pulse" />
-          抢座中
+          <span class="hidden sm:inline">抢座中</span>
         </Badge>
 
         <Button
           v-if="canRefresh"
           variant="ghost"
           size="sm"
+          class="shrink-0"
           :disabled="state.loadingList"
           @click="refresh()"
         >
           <RefreshCw :class="state.loadingList ? 'animate-spin' : ''" />
-          刷新
+          <span class="hidden sm:inline">刷新</span>
         </Button>
       </header>
 

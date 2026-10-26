@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type Component } from "vue";
+import { computed, type Component, watch } from "vue";
 import { logout, openUpdateDialog, saveSettings, state, type ViewKey } from "../store";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { ArrowUpRight, Bell, Bookmark, CalendarDays, LogOut, Moon, Settings, Sun, Zap } from "@lucide/vue";
 import BrandMark from "./BrandMark.vue";
@@ -33,6 +34,16 @@ const nav: NavItem[] = [
   { key: "notices", label: "通知公告", icon: Bell },
   { key: "settings", label: "设置", icon: Settings },
 ];
+
+// 手机上侧边栏是抽屉（Sheet 覆盖层），点完导航要收起来，否则挡住内容。
+const { isMobile, setOpenMobile } = useSidebar();
+
+watch(
+  () => state.view,
+  () => {
+    if (isMobile.value) setOpenMobile(false);
+  },
+);
 
 const initials = computed(() => {
   const name = state.status?.user?.displayName || state.status?.user?.username || "?";
@@ -57,7 +68,9 @@ async function signOut(): Promise<void> {
 </script>
 
 <template>
-  <Sidebar collapsible="none" class="border-r">
+  <!-- offcanvas: 桌面端是可收起的固定侧栏, 手机端（<=768px）自动变成抽屉覆盖层,
+       不会再把内容挤到只剩一条缝。 -->
+  <Sidebar collapsible="offcanvas" class="border-r">
     <SidebarHeader class="gap-3 px-3 py-4">
       <div class="flex items-center gap-2.5">
         <BrandMark class="size-8 shrink-0" />
@@ -78,7 +91,7 @@ async function signOut(): Promise<void> {
             <SidebarMenuItem v-for="item in nav" :key="item.key">
               <SidebarMenuButton
                 :is-active="state.view === item.key"
-                class="h-9"
+                class="h-10 md:h-9"
                 @click="state.view = item.key"
               >
                 <component :is="item.icon" />

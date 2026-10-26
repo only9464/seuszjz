@@ -74,13 +74,13 @@ function close(): void {
         当前已是最新版本。
       </p>
 
-      <div class="flex items-center gap-2 text-xs text-muted-foreground">
-        <Link2 class="size-3.5" />
+      <div class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <Link2 class="size-3.5 shrink-0" />
         <a
           href="https://github.com/only9464/seuszjz/releases/latest"
           target="_blank"
           rel="noreferrer"
-          class="truncate underline underline-offset-2 hover:text-foreground"
+          class="min-w-0 truncate underline underline-offset-2 hover:text-foreground"
           @click.prevent="openReleases()"
         >github.com/only9464/seuszjz/releases/latest</a>
       </div>

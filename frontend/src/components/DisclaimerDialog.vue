@@ -35,14 +35,14 @@ function confirm(): void {
         </DialogDescription>
       </DialogHeader>
 
-      <div class="space-y-3 text-sm leading-relaxed text-muted-foreground">
+      <div class="space-y-3 text-sm leading-relaxed break-words text-muted-foreground">
         <p>
           本项目以 MIT 许可证开源，全部代码公开在
           <a
             :href="REPO_URL"
             target="_blank"
             rel="noreferrer"
-            class="font-medium text-foreground underline underline-offset-2"
+            class="font-medium break-all text-foreground underline underline-offset-2"
             @click.prevent="openReleases()"
           >{{ REPO_URL }}</a>
           ，任何人都可以查阅、复制与修改；项目不收费、不含广告，也不收集任何个人数据。
