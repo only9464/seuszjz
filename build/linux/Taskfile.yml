@@ -152,16 +152,23 @@ tasks:
 
   generate:deb:
     desc: Creates a deb package
+    # nfpm.yaml 里的 arch: ${GOARCH} 要读环境变量, 不传就会得到空 arch。
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
 
   generate:rpm:
     desc: Creates a rpm package
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
 
   generate:aur:
     desc: Creates a arch linux packager package
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
 
