@@ -43,9 +43,11 @@ runs:
     - name: 安装 Linux 图形库开发包（GTK4 + WebKitGTK 6.0）
       if: inputs.install-gtk == 'true' && runner.os == 'Linux'
       shell: bash
+      timeout-minutes: 15
       run: |
-        sudo apt-get update
+        sudo apt-get update -o Acquire::Retries=3
         sudo apt-get install -y --no-install-recommends \
+          -o Acquire::Retries=3 \
           pkg-config build-essential \
           libgtk-4-dev libwebkitgtk-6.0-dev
         pkg-config --exists gtk4 && pkg-config --exists webkitgtk-6.0
@@ -61,6 +63,7 @@ runs:
     - name: 安装 Android SDK / NDK
       if: inputs.install-android == 'true' && runner.os == 'Linux'
       shell: bash
+      timeout-minutes: 25
       run: |
         SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
         if [ -z "$SDK_ROOT" ]; then
@@ -74,11 +77,19 @@ runs:
         echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
         echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
         yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-        "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973" > /dev/null
-        echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+        "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+        # 镜像里通常已经带了 NDK, 有就直接用, 免得为 1GB 的下载多等十几分钟。
+        NDK_DIR=""
+        if ls -d "$SDK_ROOT"/ndk/* > /dev/null 2>&1; then
+          NDK_DIR="$(ls -d "$SDK_ROOT"/ndk/* | sort -V | tail -1)"
+        else
+          "$SDKMANAGER" --install "ndk;27.0.12077973" > /dev/null
+          NDK_DIR="$SDK_ROOT/ndk/27.0.12077973"
+        fi
+        echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+        echo "NDK: $NDK_DIR"
         echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
         echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-        ls "$SDK_ROOT/ndk"
         java -version
 
     - name: 安装 NSIS
