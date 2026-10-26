@@ -245,6 +245,8 @@ jobs:
       - name: 打 AppImage
         id: appimage
         continue-on-error: true
+        # linuxdeploy 要现场下载并打包 WebKit 运行库，网络差的时候会拖很久；限时 15 分钟。
+        timeout-minutes: 15
         run: |
           wails3 task linux:create:appimage
           ls -l bin
