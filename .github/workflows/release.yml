@@ -215,6 +215,9 @@ jobs:
     needs: [prepare, check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # GTK/WebKit 开发包偶尔会因为镜像站抽风装不上；Linux 桌面版不是主发布形态，
+    # 所以这里不阻断 Release（ci.yml 里同样是必须通过的，出问题能在 PR 上看到）。
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -331,7 +334,6 @@ jobs:
         with:
           wails-version: ${{ env.WAILS_VERSION }}
           install-wails: 'true'
-          install-gtk: 'true'
           install-android: 'true'
 
       - name: 写入版本号

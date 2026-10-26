@@ -11,7 +11,7 @@ inputs:
     required: false
     default: 'false'
   install-gtk:
-    description: Linux 上安装 GTK4 + WebKitGTK 6.0 开发包（编译 wails3 与 Linux 桌面版必需）
+    description: Linux 上安装 GTK4 + WebKitGTK 6.0 开发包（只有 Linux 桌面版构建需要）
     required: false
     default: 'false'
   install-android:
@@ -35,9 +35,9 @@ runs:
         cache: npm
         cache-dependency-path: frontend/package-lock.json
 
-    # 编译 wails3 本身（CGO）和 Linux 桌面版都需要这两个开发包。
+    # 只有 Linux 桌面版构建需要这两个开发包（wails3 CLI 本身不链接 GTK）。
     # 注意: composite action 的步骤不支持 timeout-minutes, 这里用 `timeout` 兜住卡死的下载。
-    # GH 的 Ubuntu 镜像有时拉包很慢, 所以超时给到 25 分钟 + 重试。
+    # GH 的 Ubuntu 镜像偶尔会卡在 webkit 的大包上, 所以单次给 20 分钟 + 失败重试一次。
     - name: 安装 Linux 图形库开发包（GTK4 + WebKitGTK 6.0）
       if: inputs.install-gtk == 'true' && runner.os == 'Linux'
       shell: bash
@@ -45,10 +45,22 @@ runs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Dpkg::Use-Pty=0"
+        PKGS="pkg-config gcc libc6-dev libgtk-4-dev libwebkitgtk-6.0-dev"
         sudo timeout 300 apt-get update $APT_OPTS
-        sudo timeout 1500 apt-get install -y --no-install-recommends $APT_OPTS \
-          pkg-config gcc libc6-dev \
-          libgtk-4-dev libwebkitgtk-6.0-dev
+        for attempt in 1 2; do
+          echo "第 $attempt 次安装: $PKGS"
+          if sudo timeout 1200 apt-get install -y --no-install-recommends $APT_OPTS $PKGS; then
+            break
+          fi
+          if [ "$attempt" = "2" ]; then
+            echo "gtk/webkit 开发包安装两次都失败"
+            exit 1
+          fi
+          echo "安装失败，清理 dpkg 状态并重新拉索引后重试"
+          sudo dpkg --configure -a || true
+          sudo timeout 300 apt-get update $APT_OPTS || true
+          sleep 10
+        done
         pkg-config --exists gtk4 && pkg-config --exists webkitgtk-6.0
         echo "gtk4 $(pkg-config --modversion gtk4) / webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0)"
 

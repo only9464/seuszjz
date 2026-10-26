@@ -173,7 +173,6 @@ jobs:
         with:
           wails-version: ${{ env.WAILS_VERSION }}
           install-wails: 'true'
-          install-gtk: 'true'
           install-android: 'true'
 
       - name: 构建 release APK（arm64）
