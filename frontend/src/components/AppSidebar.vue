@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from "vue";
-import { logout, saveSettings, state, type ViewKey } from "../store";
+import { logout, openUpdateDialog, saveSettings, state, type ViewKey } from "../store";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { Bell, Bookmark, CalendarDays, LogOut, Moon, Settings, Sun, Zap } from "@lucide/vue";
+import { ArrowUpRight, Bell, Bookmark, CalendarDays, LogOut, Moon, Settings, Sun, Zap } from "@lucide/vue";
 import BrandMark from "./BrandMark.vue";
 
 interface NavItem {
@@ -123,6 +123,18 @@ async function signOut(): Promise<void> {
           {{ state.status?.version || "" }}
         </span>
       </div>
+
+      <!-- 有更新时在左下角提示；点开是版本对比与变更列表 -->
+      <button
+        v-if="state.update?.hasUpdate"
+        type="button"
+        class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-sidebar-accent"
+        @click="openUpdateDialog()"
+      >
+        <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+        <span class="truncate">发现新版本 v{{ state.update.latest }}</span>
+        <ArrowUpRight class="ml-auto size-3.5 shrink-0" />
+      </button>
     </SidebarFooter>
   </Sidebar>
 </template>

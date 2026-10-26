@@ -38,6 +38,7 @@ func main() {
 	app.RegisterService(application.NewService(NewSessionService(c)))
 	app.RegisterService(application.NewService(NewLectureService(c)))
 	app.RegisterService(application.NewService(NewGrabService(c)))
+	app.RegisterService(application.NewService(NewUpdateService(c)))
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",

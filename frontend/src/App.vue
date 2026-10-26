@@ -2,6 +2,8 @@
 import { computed, onMounted } from "vue";
 import { boot, refresh, state } from "./store";
 import AppSidebar from "./components/AppSidebar.vue";
+import DisclaimerDialog from "./components/DisclaimerDialog.vue";
+import UpdateDialog from "./components/UpdateDialog.vue";
 import LoginView from "./components/views/LoginView.vue";
 import LecturesView from "./components/views/LecturesView.vue";
 import MineView from "./components/views/MineView.vue";
@@ -96,4 +98,8 @@ onMounted(() => {
   </SidebarProvider>
 
   <Toaster position="bottom-right" close-button />
+
+  <!-- 首次启动的免责声明（勾选后才能继续）与更新详情 -->
+  <DisclaimerDialog />
+  <UpdateDialog />
 </template>

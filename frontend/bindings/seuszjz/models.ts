@@ -101,3 +101,44 @@ export interface Status {
     "ocrInfo": string;
     "version": string;
 }
+
+/**
+ * UpdateInfo 是一次更新检查的结果。
+ */
+export interface UpdateInfo {
+    /**
+     * 当前运行版本 (由 -X main.Version 注入)
+     */
+    "current": string;
+
+    /**
+     * GitHub 上最新的正式版本号 (去掉前缀 v)
+     */
+    "latest": string;
+
+    /**
+     * HasUpdate 为 true 表示远端版本比本地新。
+     */
+    "hasUpdate": boolean;
+
+    /**
+     * 发布页地址
+     */
+    "url": string;
+
+    /**
+     * 发布时间 (RFC3339)
+     */
+    "publishedAt": string;
+
+    /**
+     * 只保留「变更」里的功能条目
+     */
+    "notes": string[] | null;
+    "checkedAt": string;
+
+    /**
+     * 非致命错误 (网络不通等), 界面按「检查失败」展示
+     */
+    "error": string;
+}

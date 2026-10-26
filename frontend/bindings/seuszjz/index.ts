@@ -4,10 +4,12 @@
 import * as GrabService from "./grabservice.js";
 import * as LectureService from "./lectureservice.js";
 import * as SessionService from "./sessionservice.js";
+import * as UpdateService from "./updateservice.js";
 export {
     GrabService,
     LectureService,
-    SessionService
+    SessionService,
+    UpdateService
 };
 
 export type {
@@ -17,5 +19,6 @@ export type {
     OCRStatus,
     Overview,
     Settings,
-    Status
+    Status,
+    UpdateInfo
 } from "./models.js";

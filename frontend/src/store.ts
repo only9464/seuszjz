@@ -4,7 +4,8 @@ import { Events } from "@wailsio/runtime";
 import * as SessionService from "../bindings/seuszjz/sessionservice.js";
 import * as LectureService from "../bindings/seuszjz/lectureservice.js";
 import * as GrabService from "../bindings/seuszjz/grabservice.js";
-import type { Settings, Status } from "../bindings/seuszjz/models.js";
+import * as UpdateService from "../bindings/seuszjz/updateservice.js";
+import type { Settings, Status, UpdateInfo } from "../bindings/seuszjz/models.js";
 import type {
   Lecture,
   MyActivity,
@@ -39,6 +40,12 @@ export const state = reactive({
   filter: "all" as FilterKey,
   keyword: "",
   busy: {} as Record<string, boolean>,
+  // 更新检查结果 (登录成功后触发一次, 点「检查更新」可以再查)
+  update: null as UpdateInfo | null,
+  checkingUpdate: false,
+  // 更新详情弹窗、首次启动的免责声明弹窗
+  updateOpen: false,
+  disclaimerOpen: false,
 });
 
 // 提示统一走 vue-sonner（<Toaster /> 挂在 App.vue 里），不再自己维护队列。
@@ -263,6 +270,8 @@ function writeLocal(snapshot: string): void {
 
 export async function boot(): Promise<void> {
   registerEvents();
+  // 免责声明只弹一次: 用户点过「我已阅读并同意」之后不再打扰。
+  state.disclaimerOpen = !disclaimerAccepted();
   try {
     const data = await SessionService.Bootstrap(readLocal());
     // 后端会把导入/校正后的快照原样返回，直接覆盖写回。
@@ -276,6 +285,7 @@ export async function boot(): Promise<void> {
 
     if (data.status.loggedIn) {
       await refresh();
+      void checkUpdate();
     } else if (data.settings.autoLogin && (data.status.hasSession || data.settings.hasPassword)) {
       await autoLogin();
     }
@@ -341,6 +351,8 @@ async function afterLogin(): Promise<void> {
     toast("ok", "登录成功");
   }
   await refresh();
+  // 登录之后再查更新: 没登录时查也没意义, 而且校园网下 GitHub 不一定通。
+  void checkUpdate();
 }
 
 export async function login(username: string, password: string, remember: boolean): Promise<boolean> {
@@ -549,4 +561,77 @@ export async function forgetLogin(): Promise<void> {
   } catch (e) {
     toast("err", errorText(e));
   }
+}
+
+// --- 免责声明 ---------------------------------------------------------------
+// 首次启动必须勾选「我已阅读」才能继续使用；确认过就记在本地，之后不再打扰。
+const DISCLAIMER_KEY = "seuszjz.disclaimer.v1";
+
+function disclaimerAccepted(): boolean {
+  try {
+    return window.localStorage.getItem(DISCLAIMER_KEY) === "1";
+  } catch {
+    // 本地存储不可用（隐私模式）：每次启动都再确认一次，宁严勿松。
+    return false;
+  }
+}
+
+export function acceptDisclaimer(): void {
+  try {
+    window.localStorage.setItem(DISCLAIMER_KEY, "1");
+  } catch {
+    /* 存不住就只在这次会话里生效 */
+  }
+  state.disclaimerOpen = false;
+}
+
+export const REPO_URL = "https://github.com/only9464/seuszjz";
+export const UPDATE_URL = "https://github.com/only9464/seuszjz/releases/latest";
+
+// --- 更新检查 ---------------------------------------------------------------
+
+// checkUpdate 只读 GitHub 的正式发布信息，不下载、不替换任何文件。
+export async function checkUpdate(silent = true): Promise<void> {
+  if (state.checkingUpdate) return;
+  state.checkingUpdate = true;
+  try {
+    const info = await UpdateService.Check();
+    state.update = info;
+    if (info.error) {
+      // 网络不通属于常态（校园网访问 GitHub 经常失败），静默处理，不弹错误。
+      if (!silent) toast("err", `检查更新失败：${info.error}`);
+      return;
+    }
+    if (info.hasUpdate) toast("info", `发现新版本 ${info.latest}`);
+  } catch (e) {
+    state.update = {
+      current: state.status?.version || "",
+      latest: "",
+      hasUpdate: false,
+      url: UPDATE_URL,
+      publishedAt: "",
+      notes: [],
+      checkedAt: "",
+      error: errorText(e),
+    };
+    if (!silent) toast("err", `检查更新失败：${errorText(e)}`);
+  } finally {
+    state.checkingUpdate = false;
+  }
+}
+
+export function openUpdateDialog(): void {
+  state.updateOpen = true;
+}
+
+// 桌面版用系统浏览器打开；服务器模式没有本地浏览器，退回 window.open。
+export async function openReleases(): Promise<void> {
+  const url = state.update?.url || UPDATE_URL;
+  try {
+    await UpdateService.OpenReleases();
+    return;
+  } catch {
+    /* 服务器模式 / xdg-open 不可用时走下面 */
+  }
+  window.open(url, "_blank", "noopener");
 }
