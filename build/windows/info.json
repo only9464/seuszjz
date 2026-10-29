@@ -1,18 +1,18 @@
 {
 	"fixed": {
-		"file_version": "0.0.4.0",
-		"product_version": "0.0.4.0"
+		"file_version": "0.0.0.0",
+		"product_version": "0.0.0.0"
 	},
 	"info": {
 		"0000": {
 			"CompanyName": "seuszjz",
 			"FileDescription": "东南大学素质讲座预约助手",
-			"FileVersion": "0.0.4.0",
+			"FileVersion": "0.0.0.0",
 			"InternalName": "seuszjz",
 			"LegalCopyright": "Copyright (c) 2026 seuszjz contributors, MIT License",
 			"OriginalFilename": "seuszjz.exe",
 			"ProductName": "东南大学讲座助手",
-			"ProductVersion": "0.0.4.0",
+			"ProductVersion": "0.0.0.0",
 			"Comments": "东南大学素质讲座预约助手"
 		}
 	}

@@ -79,7 +79,8 @@ wails3 task package  # 当前系统的分发包
 
 几个约定：
 
-- 版本号统一走 `APP_VERSION`，会注入到 `main.Version`：`APP_VERSION=0.0.4 wails3 task windows:build`。
+- 版本号只在发布时决定：本地 `wails3 task build` 构建出来的程序固定显示 `dev`（exe 属性为 `0.0.0.0`），
+  仓库里不再跟着 tag 改版本号；要出正式版本用 `APP_VERSION=<版本> wails3 task windows:build`。
 - Windows 桌面版与服务器版是纯 Go（CGO 关闭），可以随意交叉编译；Linux/macOS 桌面版需要 CGO，在 Windows 上编它们会走 `wails3 task setup:docker` 准备的交叉镜像（`build/docker/Dockerfile.cross`）。
 - 辅助任务：`vet` / `test`（`server` 标签的静态检查与单测）、`generate:icons`、`update:build-assets`（改完 `build/config.yml` 后重新生成各平台构建资源）、`clean`、`doctor`。
 

@@ -22,6 +22,8 @@ func TestNewerVersion(t *testing.T) {
 		{"", "0.0.3", false},
 		{"abc", "0.0.3", false},
 		{"0.0.3", "abc", false},
+		// 本地 dev 构建解析不出数字, 因此永远不提示更新 (正式版才提示)。
+		{"0.0.5", "dev", false},
 	}
 	for _, c := range cases {
 		if got := newerVersion(c.latest, c.current); got != c.want {

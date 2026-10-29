@@ -146,7 +146,10 @@ func parseVersion(v string) ([3]int, bool) {
 	return out, true
 }
 
-// newerVersion 判断 latest 是否比 current 新; 解析不出来时一律当作「没有更新」。
+// newerVersion 判断 latest 是否比 current 新; 任一侧解析不出来时一律当作「没有更新」。
+//
+// 本地构建的版本号是 "dev" (见 service.go 的 Version), 解析不出数字, 所以开发时不会
+// 收到更新提示; 正式发布的版本号由 CI 注入 tag 版本 (如 0.0.5), 更新提示正常。
 func newerVersion(latest, current string) bool {
 	l, okLatest := parseVersion(latest)
 	c, okCurrent := parseVersion(current)
