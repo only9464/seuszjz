@@ -19,9 +19,10 @@ import (
 
 // Version 是应用版本号, 显示在设置页。
 //
-// 必须是变量而不是常量: 发布时由 CI 用 -ldflags "-X main.Version=1.2.3" 注入 git tag 对应的版本,
-// 本地 `wails3 task build` 不注入时用下面这个默认值。
-var Version = "0.0.4"
+// 必须是变量而不是常量: 发布时由 CI 用 -ldflags "-X main.Version=1.2.3" 注入 git tag 对应的版本。
+// 本地 `wails3 task build` 不注入, 统一显示 "dev" —— 仓库里不再跟着 tag 改版本号,
+// 版本号只在发布时由 tag / APP_VERSION 决定。
+var Version = "dev"
 
 const (
 	loginTimeout = 150 * time.Second
@@ -52,6 +53,12 @@ type core struct {
 	cached  *store.Session
 	// network 是最近一次登录实际走的路径 (campus / offcampus), 供界面与日志展示。
 	network string
+
+	// pendingSess/pendingUser/pendingPass 暂存「等二次验证」的会话:
+	// 密码登录返回非可信设备时留着这个会话 (同一份 Cookie), 用户输完短信码后继续。
+	pendingSess *seu.Session
+	pendingUser string
+	pendingPass string
 
 	// legacyDone 标记旧版磁盘配置只尝试导入一次。
 	legacyDone bool
@@ -262,8 +269,20 @@ func (c *core) loginLocked(ctx context.Context, username, password string) (seu.
 	sess := c.newSession(username, password)
 	progress := func(stage, msg string) { c.emit("login:progress", msg) }
 	if err := sess.Login(ctx, progress); err != nil {
+		if errors.Is(err, seu.ErrStage2Required) {
+			// 学校要求二次验证: 把这个会话留着, 用户输完短信码后接着用。
+			c.stateMu.Lock()
+			c.pendingSess, c.pendingUser, c.pendingPass = sess, username, password
+			c.stateMu.Unlock()
+		}
 		return seu.UserInfo{}, err
 	}
+	return c.finishLoginLocked(ctx, sess, username, password)
+}
+
+// finishLoginLocked 保存登录成功的会话 (loginLocked / submitStage2Locked 共用)。
+func (c *core) finishLoginLocked(ctx context.Context, sess *seu.Session, username, password string) (seu.UserInfo, error) {
+	_ = ctx
 
 	user := sess.User()
 	if user.Username == "" {
@@ -289,6 +308,49 @@ func (c *core) loginLocked(ctx context.Context, username, password string) (seu.
 	}
 	c.persist()
 	return user, nil
+}
+
+// stage2Pending 报告是否有等待二次验证的会话。
+func (c *core) stage2Pending() bool {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.pendingSess != nil
+}
+
+// sendStage2Code 给等待中的账号发短信验证码。
+func (c *core) sendStage2Code(ctx context.Context) error {
+	c.netMu.Lock()
+	defer c.netMu.Unlock()
+
+	c.stateMu.RLock()
+	sess, username := c.pendingSess, c.pendingUser
+	c.stateMu.RUnlock()
+	if sess == nil {
+		return errors.New("还没有待验证的登录, 请先输入账号密码")
+	}
+	c.logf("发送二次验证码: %s", username)
+	return sess.SendStage2Code(ctx)
+}
+
+// submitStage2Locked 用短信验证码完成登录。
+func (c *core) submitStage2Locked(ctx context.Context, code string) (seu.UserInfo, error) {
+	c.stateMu.RLock()
+	sess, username, password := c.pendingSess, c.pendingUser, c.pendingPass
+	c.stateMu.RUnlock()
+	if sess == nil {
+		return seu.UserInfo{}, errors.New("还没有待验证的登录, 请先输入账号密码")
+	}
+
+	progress := func(stage, msg string) { c.emit("login:progress", msg) }
+	if err := sess.LoginWithStage2(ctx, code, progress); err != nil {
+		return seu.UserInfo{}, err
+	}
+
+	c.stateMu.Lock()
+	c.pendingSess, c.pendingUser, c.pendingPass = nil, "", ""
+	c.stateMu.Unlock()
+	c.logf("二次验证通过")
+	return c.finishLoginLocked(ctx, sess, username, password)
 }
 
 // restoreSession 用缓存的 Cookie 试恢复会话。
@@ -482,9 +544,44 @@ func (s *SessionService) Login(ctx context.Context, username, password string, r
 
 	user, err := c.login(ctx, username, password)
 	if err != nil {
+		if errors.Is(err, seu.ErrStage2Required) {
+			return LoginResult{User: seu.UserInfo{Username: username}, NeedStage2: true}, nil
+		}
 		return LoginResult{}, err
 	}
 	return LoginResult{User: user, Source: "manual", Network: c.networkOf()}, nil
+}
+
+// SendStage2Code 给当前账号发一条二次验证短信 (学校要求非可信设备验证时使用)。
+func (s *SessionService) SendStage2Code(ctx context.Context) (LoginResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+
+	c := s.core
+	if err := c.sendStage2Code(ctx); err != nil {
+		return LoginResult{}, err
+	}
+	return LoginResult{NeedStage2: true, Source: "stage2"}, nil
+}
+
+// SubmitStage2 提交短信验证码并完成登录; 成功后会写回会话缓存。
+func (s *SessionService) SubmitStage2(ctx context.Context, code string) (LoginResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
+	defer cancel()
+
+	c := s.core
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return LoginResult{}, errors.New("请填写短信验证码")
+	}
+
+	c.netMu.Lock()
+	user, err := c.submitStage2Locked(ctx, code)
+	c.netMu.Unlock()
+	if err != nil {
+		return LoginResult{}, err
+	}
+	return LoginResult{User: user, Source: "stage2", Network: c.networkOf()}, nil
 }
 
 // AutoLogin 依次尝试 Cookie 缓存与已保存的密码。

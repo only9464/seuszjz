@@ -60,6 +60,13 @@ export function SaveSettings($in: $models.Settings): $CancellablePromise<$models
 }
 
 /**
+ * SendStage2Code 给当前账号发一条二次验证短信 (学校要求非可信设备验证时使用)。
+ */
+export function SendStage2Code(): $CancellablePromise<$models.LoginResult> {
+    return $Call.ByID(3949829550);
+}
+
+/**
  * Settings 返回当前偏好设置。
  */
 export function Settings(): $CancellablePromise<$models.Settings> {
@@ -71,4 +78,11 @@ export function Settings(): $CancellablePromise<$models.Settings> {
  */
 export function Status(): $CancellablePromise<$models.Status> {
     return $Call.ByID(3272172923);
+}
+
+/**
+ * SubmitStage2 提交短信验证码并完成登录; 成功后会写回会话缓存。
+ */
+export function SubmitStage2(code: string): $CancellablePromise<$models.LoginResult> {
+    return $Call.ByID(3622611553, code);
 }

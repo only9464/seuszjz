@@ -72,6 +72,13 @@ func ParseNetMode(v string) NetMode {
 // ErrSessionExpired 表示 ehall 会话已失效, 需要重新登录。
 var ErrSessionExpired = errors.New("登录状态已失效, 请重新登录")
 
+// ErrStage2Required 表示学校要求二次验证 (非可信设备)。
+//
+// 统一身份认证对「陌生设备」会返回 code 502 / info=非可信设备，要求输入短信验证码。
+// 此时调用 SendStage2Code 发码, 再用 LoginWithStage2 带码重提即可; 带 rememberTrustDevice
+// 成功后该设备指纹会被学校记住, 之后不再要求验证。
+var ErrStage2Required = errors.New("需要二次验证")
+
 // LoginError 表示登录流程中的可预期失败 (账号密码错误、需要二次校验等)。
 type LoginError struct {
 	Stage string

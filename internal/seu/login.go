@@ -38,6 +38,24 @@ func (s *Session) progress(fn stageFunc, stage, msg string) {
 // 两条路互为兜底, 但只有「网络不可达」才换路; 密码错误、票据为空之类的业务
 // 失败直接报错, 不做无谓重试。
 func (s *Session) Login(ctx context.Context, progress func(stage, msg string)) error {
+	return s.login(ctx, "", progress)
+}
+
+// LoginWithStage2 带二次验证码重新完成登录。
+//
+// 学校对陌生设备返回 502「非可信设备」时, 前端先调 SendStage2Code 发短信, 用户输入后
+// 再调这里; 内部会用同一个会话(同一份 Cookie)重新提交 casLogin, 并带上 rememberTrustDevice,
+// 让学校把这台设备记成可信设备。
+func (s *Session) LoginWithStage2(ctx context.Context, code string, progress func(stage, msg string)) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return &LoginError{Msg: "请填写短信验证码"}
+	}
+	return s.login(ctx, code, progress)
+}
+
+// login 是 Login / LoginWithStage2 的公共实现; stage2Code 为空表示没有二次验证码。
+func (s *Session) login(ctx context.Context, stage2Code string, progress func(stage, msg string)) error {
 	s.Reset()
 	if strings.TrimSpace(s.cfg.Username) == "" {
 		return &LoginError{Msg: "请填写学号"}
@@ -45,7 +63,7 @@ func (s *Session) Login(ctx context.Context, progress func(stage, msg string)) e
 	if s.cfg.Password == "" {
 		return &LoginError{Msg: "请填写密码"}
 	}
-	if err := s.casLogin(ctx, progress); err != nil {
+	if err := s.casLogin(ctx, progress, stage2Code); err != nil {
 		return err
 	}
 
@@ -199,7 +217,7 @@ func stageError(stage string, err error) error {
 }
 
 // casLogin: 统一身份认证, 用 RSA 加密后的密码换取 CAS 会话。
-func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)) error {
+func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string), stage2Code string) error {
 	stage := "cas"
 	s.progress(progress, stage, "正在验证统一身份认证账号")
 
@@ -231,8 +249,10 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 	}, &captcha); err != nil {
 		return &LoginError{Stage: "统一身份认证", Msg: err.Error()}
 	}
-	if truthy(captcha["needStage2Validation"]) {
-		return &LoginError{Msg: "该账号需要二次校验 (短信/手机验证码), 协议登录无法完成, 请先在浏览器完成一次登录"}
+	if truthy(captcha["needStage2Validation"]) && stage2Code == "" {
+		// 前置检查就要二次验证: 让上层去发验证码。
+		s.progress(progress, stage, "需要二次验证, 请先发送短信验证码")
+		return &LoginError{Stage: "统一身份认证", Msg: "需要二次验证", Cause: ErrStage2Required}
 	}
 	if code, ok := captcha["code"]; ok && rawString(code) != "200" && rawString(code) != "" {
 		return &LoginError{Stage: "统一身份认证", Msg: "认证前置检查失败: " + rawString(captcha["info"])}
@@ -257,16 +277,32 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 		return &LoginError{Stage: "统一身份认证", Msg: err.Error()}
 	}
 	sum := md5.Sum([]byte(s.cfg.Username))
+
+	// 二次验证码同样要用同一把 RSA 公钥加密后再提交 (与浏览器一致)。
+	var verifyCode any
+	rememberTrust := false
+	if stage2Code != "" {
+		encryptedCode, err := encryptPassword(publicKey, stage2Code)
+		if err != nil {
+			return &LoginError{Stage: "统一身份认证", Msg: err.Error()}
+		}
+		verifyCode = encryptedCode
+		// 勾上「信任此设备」: 学校会记住下面的设备指纹, 之后不再要求二次验证。
+		rememberTrust = true
+	}
+
 	payload := map[string]any{
-		"service":        CASService,
-		"username":       s.cfg.Username,
-		"password":       encrypted,
-		"captcha":        "",
-		"rememberMe":     false,
-		"loginType":      "account",
-		"wxBinded":       false,
-		"mobilePhoneNum": "",
-		"fingerPrint":    "stable_" + hex.EncodeToString(sum[:]),
+		"service":             CASService,
+		"username":            s.cfg.Username,
+		"password":            encrypted,
+		"captcha":             "",
+		"rememberMe":          false,
+		"loginType":           "account",
+		"wxBinded":            false,
+		"mobilePhoneNum":      "",
+		"mobileVerifyCode":    verifyCode,
+		"fingerPrint":         "stable_" + hex.EncodeToString(sum[:]),
+		"rememberTrustDevice": rememberTrust,
 	}
 
 	var result map[string]any
@@ -278,6 +314,14 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 	}, &result); err != nil {
 		return &LoginError{Stage: "统一身份认证", Msg: err.Error()}
 	}
+	// 502 + 「非可信设备」= 学校要求二次验证; 其它非 success 都是业务失败。
+	if rawString(result["code"]) == "502" || strings.Contains(rawString(result["info"]), "非可信设备") {
+		if stage2Code == "" {
+			s.progress(progress, stage, "当前设备需要二次验证, 请先发送短信验证码")
+			return &LoginError{Stage: "统一身份认证", Msg: "需要二次验证", Cause: ErrStage2Required}
+		}
+		return &LoginError{Msg: "二次验证未通过: " + rawString(result["info"])}
+	}
 	if !truthy(result["success"]) {
 		msg := rawString(result["info"])
 		if msg == "" {
@@ -285,10 +329,38 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 		}
 		return &LoginError{Msg: "登录失败: " + msg}
 	}
-	if truthy(result["needStage2Validation"]) {
-		return &LoginError{Msg: "登录后要求二次校验, 协议登录无法完成"}
+	if truthy(result["needStage2Validation"]) && stage2Code == "" {
+		s.progress(progress, stage, "需要二次验证, 请先发送短信验证码")
+		return &LoginError{Stage: "统一身份认证", Msg: "需要二次验证", Cause: ErrStage2Required}
 	}
 	s.progress(progress, stage, "统一身份认证通过")
+	return nil
+}
+
+// SendStage2Code 给当前账号绑定的手机发一条二次验证短信。
+//
+// 接口: POST /auth/casback/sendStage2Code {"userId": 学号} (与浏览器前端一致)。
+func (s *Session) SendStage2Code(ctx context.Context) error {
+	var out map[string]any
+	_, err := s.doJSON(ctx, request{
+		method: "POST",
+		target: AuthBase + "/auth/casback/sendStage2Code",
+		json:   map[string]any{"userId": s.cfg.Username},
+		headers: map[string]string{
+			"Origin":  AuthBase,
+			"Referer": AuthBase + "/dist/",
+		},
+	}, &out)
+	if err != nil {
+		return &LoginError{Stage: "二次验证", Msg: "发送验证码失败: " + err.Error()}
+	}
+	if rawString(out["code"]) != "200" {
+		msg := rawString(out["info"])
+		if msg == "" {
+			msg = "发送验证码失败"
+		}
+		return &LoginError{Stage: "二次验证", Msg: msg}
+	}
 	return nil
 }
 

@@ -36,7 +36,7 @@ export interface LoginResult {
     "user": seu$0.UserInfo;
 
     /**
-     * manual / cache / password
+     * manual / cache / password / stage2
      */
     "source": string;
 
@@ -44,6 +44,11 @@ export interface LoginResult {
      * campus / offcampus, 本次走的网络路径
      */
     "network": string;
+
+    /**
+     * NeedStage2 表示学校要求二次验证 (非可信设备): 前端应引导用户输入短信验证码。
+     */
+    "needStage2": boolean;
 }
 
 /**

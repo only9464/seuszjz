@@ -34,6 +34,9 @@ export const state = reactive({
   loggingIn: false,
   loginError: "",
   loginProgress: "",
+  // 学校要求二次验证 (非可信设备) 时为 true, 登录页切换到短信验证码输入。
+  needStage2: false,
+  stage2Hint: "",
   grab: null as GrabState | null,
   reserveTarget: null as Lecture | null,
   grabTarget: "" as string,
@@ -361,7 +364,17 @@ export async function login(username: string, password: string, remember: boolea
   state.loginError = "";
   state.loginProgress = "正在连接统一身份认证…";
   try {
-    await SessionService.Login(username.trim(), password, remember);
+    const res = await SessionService.Login(username.trim(), password, remember);
+    if (res.needStage2) {
+      // 陌生设备: 学校要求短信二次验证, 登录页切到验证码输入。
+      state.needStage2 = true;
+      state.stage2Hint = "";
+      state.loginProgress = "";
+      state.loggingIn = false;
+      toast("info", "当前设备需要短信验证，请先点「发送验证码」");
+      return false;
+    }
+    state.needStage2 = false;
     await afterLogin();
     return true;
   } catch (e) {
@@ -371,6 +384,47 @@ export async function login(username: string, password: string, remember: boolea
     state.loggingIn = false;
     state.loginProgress = "";
   }
+}
+
+// sendStage2Code 发送短信验证码。
+export async function sendStage2Code(): Promise<boolean> {
+  try {
+    await SessionService.SendStage2Code();
+    state.stage2Hint = "验证码已发送，请查看手机短信";
+    toast("ok", "验证码已发送");
+    return true;
+  } catch (e) {
+    state.stage2Hint = errorText(e);
+    return false;
+  }
+}
+
+// submitStage2 提交短信验证码并完成登录。
+export async function submitStage2(code: string): Promise<boolean> {
+  if (state.loggingIn) return false;
+  state.loggingIn = true;
+  state.loginError = "";
+  state.loginProgress = "正在校验短信验证码…";
+  try {
+    await SessionService.SubmitStage2(code.trim());
+    state.needStage2 = false;
+    state.stage2Hint = "";
+    await afterLogin();
+    return true;
+  } catch (e) {
+    state.loginError = errorText(e);
+    return false;
+  } finally {
+    state.loggingIn = false;
+    state.loginProgress = "";
+  }
+}
+
+// cancelStage2 放弃二次验证, 回到账号密码输入。
+export function cancelStage2(): void {
+  state.needStage2 = false;
+  state.stage2Hint = "";
+  state.loginError = "";
 }
 
 export async function autoLogin(): Promise<void> {

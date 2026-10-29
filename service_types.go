@@ -55,8 +55,10 @@ type Overview struct {
 // LoginResult 是登录结果。
 type LoginResult struct {
 	User    seu.UserInfo `json:"user"`
-	Source  string       `json:"source"`  // manual / cache / password
+	Source  string       `json:"source"`  // manual / cache / password / stage2
 	Network string       `json:"network"` // campus / offcampus, 本次走的网络路径
+	// NeedStage2 表示学校要求二次验证 (非可信设备): 前端应引导用户输入短信验证码。
+	NeedStage2 bool `json:"needStage2"`
 }
 
 // Captcha 是一张验证码图片 (data URL)。
