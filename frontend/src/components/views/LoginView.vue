@@ -212,6 +212,7 @@ function toggleTheme(): void {
         <CardFooter class="border-t bg-muted/40 px-5 py-3">
           <p class="text-[11px] leading-relaxed text-muted-foreground">
             账号密码只保存在浏览器本地存储（localStorage），密码做 AES-GCM 混淆，程序目录里不落文件。
+            短信验证码只用于当次登录、提交后即清空，程序不保存验证码、也不获取你的手机号。
           </p>
         </CardFooter>
       </Card>
