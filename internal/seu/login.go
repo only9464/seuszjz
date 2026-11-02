@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -55,8 +56,13 @@ func (s *Session) LoginWithStage2(ctx context.Context, code string, progress fun
 }
 
 // login 是 Login / LoginWithStage2 的公共实现; stage2Code 为空表示没有二次验证码。
+//
+// 注意: 带验证码重提时**不能** Reset —— 验证码是发给「发码那次会话」的, 会话 Cookie
+// (CHIPER_UID 等) 一旦清掉, 学校会认为这是一次全新的请求, 验证码随即失效。
 func (s *Session) login(ctx context.Context, stage2Code string, progress func(stage, msg string)) error {
-	s.Reset()
+	if stage2Code == "" {
+		s.Reset()
+	}
 	if strings.TrimSpace(s.cfg.Username) == "" {
 		return &LoginError{Msg: "请填写学号"}
 	}
@@ -292,17 +298,24 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 	}
 
 	payload := map[string]any{
-		"service":             CASService,
-		"username":            s.cfg.Username,
-		"password":            encrypted,
-		"captcha":             "",
-		"rememberMe":          false,
+		"service":  CASService,
+		"username": s.cfg.Username,
+		"password": encrypted,
+		"captcha":  "",
+		// 与浏览器登录表单的「记住密码」保持一致 (默认勾选)。
+		// 服务端很可能只有在 rememberMe 为真时才会把设备信任落库, 否则每次登录都要二次验证。
+		"rememberMe":          true,
 		"loginType":           "account",
 		"wxBinded":            false,
 		"mobilePhoneNum":      "",
 		"mobileVerifyCode":    verifyCode,
 		"fingerPrint":         "stable_" + hex.EncodeToString(sum[:]),
 		"rememberTrustDevice": rememberTrust,
+	}
+
+	if s.cfg.Debug {
+		s.logf("casLogin: rememberMe=true fingerprint=%s stage2=%v",
+			"stable_"+hex.EncodeToString(sum[:]), stage2Code != "")
 	}
 
 	var result map[string]any
@@ -327,6 +340,10 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 		if msg == "" {
 			msg = "账号或密码错误"
 		}
+		if stage2Code != "" {
+			// 走到这里说明是在提交短信验证码, 给一句能指导下一步的提示。
+			return &LoginError{Msg: "短信验证码不正确或已过期 (" + msg + "), 请重新发送验证码"}
+		}
 		return &LoginError{Msg: "登录失败: " + msg}
 	}
 	if truthy(result["needStage2Validation"]) && stage2Code == "" {
@@ -340,28 +357,56 @@ func (s *Session) casLogin(ctx context.Context, progress func(stage, msg string)
 // SendStage2Code 给当前账号绑定的手机发一条二次验证短信。
 //
 // 接口: POST /auth/casback/sendStage2Code {"userId": 学号} (与浏览器前端一致)。
+//
+// 注意: 服务端对「刚发过」的请求会返回 code=5004 + "用户未登记手机号" 这种误导性文案
+// (实测同一个账号隔 20 秒再发就成功, 并返回 "验证码已发送 1xxxxxxxxxx, 2分钟有效")。
+// 所以这里按 0/3s/15s 重试三次, 只有全部失败才把服务端文案抛给用户。
 func (s *Session) SendStage2Code(ctx context.Context) error {
-	var out map[string]any
-	_, err := s.doJSON(ctx, request{
-		method: "POST",
-		target: AuthBase + "/auth/casback/sendStage2Code",
-		json:   map[string]any{"userId": s.cfg.Username},
-		headers: map[string]string{
-			"Origin":  AuthBase,
-			"Referer": AuthBase + "/dist/",
-		},
-	}, &out)
-	if err != nil {
-		return &LoginError{Stage: "二次验证", Msg: "发送验证码失败: " + err.Error()}
-	}
-	if rawString(out["code"]) != "200" {
-		msg := rawString(out["info"])
-		if msg == "" {
-			msg = "发送验证码失败"
+	delays := []time.Duration{0, 3 * time.Second, 15 * time.Second}
+	lastMsg := ""
+	for i, delay := range delays {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
 		}
-		return &LoginError{Stage: "二次验证", Msg: msg}
+		var out map[string]any
+		_, err := s.doJSON(ctx, request{
+			method: "POST",
+			target: AuthBase + "/auth/casback/sendStage2Code",
+			json:   map[string]any{"userId": s.cfg.Username},
+			headers: map[string]string{
+				"Origin":  AuthBase,
+				"Referer": AuthBase + "/dist/",
+			},
+		}, &out)
+		if err != nil {
+			lastMsg = "发送验证码失败: " + err.Error()
+			continue
+		}
+		info := rawString(out["info"])
+		if rawString(out["code"]) == "200" {
+			// 成功文案里带完整手机号, 只记脱敏后的。
+			s.logf("二次验证码已发送: %s", maskPhone(info))
+			return nil
+		}
+		lastMsg = info
+		if lastMsg == "" {
+			lastMsg = "发送验证码失败"
+		}
+		if i < len(delays)-1 {
+			s.logf("发送验证码失败(%s), 稍后重试", lastMsg)
+		}
 	}
-	return nil
+	return &LoginError{Stage: "二次验证", Msg: lastMsg}
+}
+
+// maskPhone 把文案里的手机号中间四位打码 (138****8888), 避免写进日志。
+func maskPhone(text string) string {
+	re := regexp.MustCompile(`(1[3-9]\d)\d{4}(\d{4})`)
+	return re.ReplaceAllString(text, "$1****$2")
 }
 
 // portalLogin: aTrust 网关换票 + 上报设备 + 确认在线。
