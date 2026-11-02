@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import {
   cancelStage2,
+  forgetLogin,
   login,
   saveSettings,
   sendStage2Code,
@@ -23,6 +24,29 @@ const password = ref("");
 const remember = ref(state.settings?.remember ?? true);
 
 const light = computed(() => state.settings?.theme === "light");
+
+
+// clearing 用于「清除本地登录信息」按钮的二次确认 (防误点) 与忙碌状态。
+const clearing = ref(false);
+const confirmClear = ref(false);
+
+async function clearSavedLogin(): Promise<void> {
+  if (clearing.value) return;
+  if (!confirmClear.value) {
+    confirmClear.value = true;
+    window.setTimeout(() => { confirmClear.value = false; }, 4000);
+    return;
+  }
+  clearing.value = true;
+  confirmClear.value = false;
+  try {
+    await forgetLogin();
+    password.value = "";
+    cancelStage2();
+  } finally {
+    clearing.value = false;
+  }
+}
 
 // 二次验证 (非可信设备): 短信验证码输入与 60 秒重发倒计时。
 const stage2Code = ref("");
@@ -206,6 +230,18 @@ function toggleTheme(): void {
               <Spinner v-if="state.loggingIn" />
               {{ state.loggingIn ? "登录中" : "登录" }}
             </Button>
+
+            <div class="flex justify-center">
+              <button
+                type="button"
+                class="text-[11px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                :class="confirmClear ? 'text-destructive hover:text-destructive' : ''"
+                :disabled="clearing || state.loggingIn"
+                @click="clearSavedLogin"
+              >
+                {{ confirmClear ? "再点一次确认清除" : "清除本地登录信息" }}
+              </button>
+            </div>
           </form>
         </CardContent>
 
