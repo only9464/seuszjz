@@ -648,7 +648,9 @@ export async function forgetLogin(): Promise<void> {
 
 // --- 免责声明 ---------------------------------------------------------------
 // 首次启动必须勾选「我已阅读」才能继续使用；确认过就记在本地，之后不再打扰。
-const DISCLAIMER_KEY = "seuszjz.disclaimer.v1";
+// v2: 提示改成两页（第 1 页是学校禁止脚本预约的通知截图），版本号一并升，
+// 这样已经确认过的老用户也会再看一次新内容。
+const DISCLAIMER_KEY = "seuszjz.disclaimer.v2";
 
 function disclaimerAccepted(): boolean {
   try {

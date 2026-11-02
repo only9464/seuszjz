@@ -10,8 +10,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import warnImage from "../assets/warn.png";
 
+// 两页：第 1 页是学校通知截图（必须先看），第 2 页才是免责声明与勾选。
+const page = ref(0);
 const checked = ref(false);
+
+function next(): void {
+  page.value = 1;
+}
 
 function confirm(): void {
   if (!checked.value) return;
@@ -21,7 +28,7 @@ function confirm(): void {
 
 <template>
   <Dialog v-model:open="state.disclaimerOpen">
-    <!-- 必须勾选才能继续：点遮罩、按 Esc 都不关闭，也不给关闭按钮。 -->
+    <!-- 必须走完两页并勾选才能继续：点遮罩、按 Esc 都不关闭，也不给关闭按钮。 -->
     <DialogContent
       class="max-h-[86vh] overflow-y-auto sm:max-w-xl"
       :show-close-button="false"
@@ -29,13 +36,34 @@ function confirm(): void {
       @escape-key-down.prevent
     >
       <DialogHeader>
-        <DialogTitle>使用前请阅读</DialogTitle>
+        <DialogTitle>{{ page === 0 ? "重要提醒" : "使用前请阅读" }}</DialogTitle>
         <DialogDescription>
-          这是一个免费的开源项目，与东南大学官方无关。
+          {{
+            page === 0
+              ? "学校已明确禁止使用脚本预约讲座，请先看完这一页。"
+              : "这是一个免费的开源项目，与东南大学官方无关。"
+          }}
         </DialogDescription>
       </DialogHeader>
 
-      <div class="space-y-3 text-sm leading-relaxed break-words text-muted-foreground">
+      <!-- 第 1 页：学校通知原文截图 -->
+      <div v-if="page === 0" class="space-y-3">
+        <!-- 高度设上限: 通知截图很长, 限高后「我已阅读，下一步」不会被挤到屏幕外 -->
+        <div class="flex justify-center">
+          <img
+            :src="warnImage"
+            alt="学校关于禁止使用脚本预约讲座的通知截图"
+            class="max-h-[46vh] w-auto rounded-lg border bg-white"
+          />
+        </div>
+        <p class="text-xs leading-relaxed text-muted-foreground">
+          以上为学校通知原文：严禁使用脚本预约讲座、严禁售卖或购买预约脚本、严禁委托他人代听。
+          一经核实，系统将限制预约权限并依规处置。
+        </p>
+      </div>
+
+      <!-- 第 2 页：免责声明 -->
+      <div v-else class="space-y-3 text-sm leading-relaxed break-words text-muted-foreground">
         <p>
           本项目以 MIT 许可证开源，全部代码公开在
           <a
@@ -60,7 +88,10 @@ function confirm(): void {
         </p>
       </div>
 
-      <label class="flex cursor-pointer items-start gap-2.5 text-sm leading-relaxed">
+      <label
+        v-if="page === 1"
+        class="flex cursor-pointer items-start gap-2.5 text-sm leading-relaxed"
+      >
         <input
           v-model="checked"
           type="checkbox"
@@ -69,8 +100,12 @@ function confirm(): void {
         <span>我已认真阅读以上内容，并承诺本人所有行为产生的后果自行承担</span>
       </label>
 
-      <DialogFooter>
-        <Button class="w-full sm:w-auto" :disabled="!checked" @click="confirm">
+      <DialogFooter class="items-center gap-2 sm:justify-between">
+        <span class="text-[11px] text-muted-foreground">{{ page + 1 }} / 2</span>
+        <Button v-if="page === 0" class="w-full sm:w-auto" @click="next">
+          我已阅读，下一步
+        </Button>
+        <Button v-else class="w-full sm:w-auto" :disabled="!checked" @click="confirm">
           同意并继续
         </Button>
       </DialogFooter>
