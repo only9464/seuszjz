@@ -2,6 +2,7 @@ package grab
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -203,5 +204,63 @@ func TestZeroCooldown(t *testing.T) {
 	// 冷却为 0 时应立刻重试: 250ms 内至少提交 3 次; 若被当成默认 5 分钟就只会提交 1 次。
 	if reserves < 3 {
 		t.Fatalf("冷却为 0 时重试太慢: 只提交了 %d 次", reserves)
+	}
+}
+
+// TestSetTargetWhileRunning 覆盖「运行中切换目标」: 不需要先停止重开。
+func TestSetTargetWhileRunning(t *testing.T) {
+	api := &probeAPI{lecture: seu.Lecture{
+		WID: "a", Name: "讲座A", Status: seu.StatusFull, Booked: 10, Capacity: 10,
+	}}
+	eng := started(t, api, Options{
+		WID:             "a",
+		WaitInterval:    2 * time.Second, // 让第一轮结束就进入睡眠, 便于稳定断言
+		AttemptInterval: time.Second,
+	})
+	defer eng.Stop()
+
+	if got := eng.State().WID; got != "a" {
+		t.Fatalf("初始目标 = %q, 期望 a", got)
+	}
+
+	// 切到新目标: 状态立即更新, 无需停止任务。
+	if err := eng.SetTarget("b", "讲座B"); err != nil {
+		t.Fatalf("SetTarget 失败: %v", err)
+	}
+	state := eng.State()
+	if state.WID != "b" {
+		t.Fatalf("切换后 WID = %q, 期望 b", state.WID)
+	}
+	if !state.Running {
+		t.Fatal("切换目标不应终止任务")
+	}
+	if state.Message != "已切换目标: 讲座B" {
+		t.Fatalf("切换后 Message = %q", state.Message)
+	}
+	found := false
+	for _, entry := range state.Logs {
+		if strings.Contains(entry.Text, "已切换抢座目标") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("日志里没有切换记录: %+v", state.Logs)
+	}
+
+	// 参数校验。
+	if err := eng.SetTarget("  ", ""); err == nil {
+		t.Fatal("空目标应当报错")
+	}
+	if err := eng.SetTarget("b", "讲座B"); err != nil {
+		t.Fatalf("切到同一目标应当幂等, 实际: %v", err)
+	}
+}
+
+// TestSetTargetRequiresRunning 覆盖「未运行时报错」。
+func TestSetTargetRequiresRunning(t *testing.T) {
+	eng := New()
+	if err := eng.SetTarget("a", "讲座A"); err == nil {
+		t.Fatal("未运行时 SetTarget 应当报错")
 	}
 }

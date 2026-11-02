@@ -547,6 +547,7 @@ func (s *SessionService) Login(ctx context.Context, username, password string, r
 		if errors.Is(err, seu.ErrStage2Required) {
 			return LoginResult{User: seu.UserInfo{Username: username}, NeedStage2: true}, nil
 		}
+
 		return LoginResult{}, err
 	}
 	return LoginResult{User: user, Source: "manual", Network: c.networkOf()}, nil
@@ -853,6 +854,17 @@ func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, 
 
 	if err := c.eng.Start(context.Background(), c, opts); err != nil {
 		return grab.State{}, err
+	}
+	return c.eng.State(), nil
+}
+
+// Stop 停止抢座任务。
+// SetTarget 运行中切换抢座目标 (下一轮轮询生效)。name 仅用于日志与界面展示。
+func (s *GrabService) SetTarget(ctx context.Context, wid, name string) (grab.State, error) {
+	_ = ctx
+	c := s.core
+	if err := c.eng.SetTarget(wid, name); err != nil {
+		return c.eng.State(), err
 	}
 	return c.eng.State(), nil
 }

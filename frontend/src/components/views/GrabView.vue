@@ -6,6 +6,7 @@ import {
   formatDateTime,
   refreshGrabCaptcha,
   saveSettings,
+  setGrabTarget,
   startGrab,
   state,
   stopGrab,
@@ -30,10 +31,16 @@ import { Play, RefreshCw, Square, Zap } from "@lucide/vue";
 
 const settings = state.settings;
 
+// 选择器的取值以「用户选的目标」为准。
+// 之前 get 优先取 state.grab?.wid —— 停止后那个快照还在, 于是下拉框永远显示上一次的讲座,
+// 选别的会被立刻顶回去, 看起来就像「停止后没法切换目标」。
 const selected = computed({
-  get: () => state.grab?.wid || state.grabTarget || "",
+  get: () => state.grabTarget || state.grab?.wid || "",
   set: (value: string) => {
-    state.grabTarget = value;
+    // 抢座进行中也允许切换: 后端会在下一轮轮询改用新目标 (不用先停止重开)。
+    // 顺带把讲座名传给后端, 日志里就能看到「已切换抢座目标: xxx」。
+    const lecture = state.lectures.find((item) => item.wid === value);
+    void setGrabTarget(value, lecture?.name ?? "");
   },
 });
 
@@ -129,7 +136,7 @@ const phaseText = computed(() => {
       <div class="flex flex-wrap items-end gap-2">
         <div class="min-w-0 flex-1 space-y-1.5">
           <Label class="text-[11px] text-muted-foreground">抢座目标</Label>
-          <Select v-model="selected" :disabled="grabbing">
+          <Select v-model="selected">
             <SelectTrigger class="h-8 w-full text-xs" size="sm">
               <SelectValue placeholder="选择一讲讲座" />
             </SelectTrigger>
