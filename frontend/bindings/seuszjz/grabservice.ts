@@ -29,6 +29,14 @@ export function RefreshCaptcha(): $CancellablePromise<grab$0.State> {
 }
 
 /**
+ * Stop 停止抢座任务。
+ * SetTarget 运行中切换抢座目标 (下一轮轮询生效)。name 仅用于日志与界面展示。
+ */
+export function SetTarget(wid: string, name: string): $CancellablePromise<grab$0.State> {
+    return $Call.ByID(653411024, wid, name);
+}
+
+/**
  * Start 启动抢座任务。
  */
 export function Start(wid: string, waitMs: number, attemptMs: number, cooldown: number, autoCaptcha: boolean): $CancellablePromise<grab$0.State> {

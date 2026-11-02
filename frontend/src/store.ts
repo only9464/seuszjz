@@ -37,6 +37,7 @@ export const state = reactive({
   // 学校要求二次验证 (非可信设备) 时为 true, 登录页切换到短信验证码输入。
   needStage2: false,
   stage2Hint: "",
+
   grab: null as GrabState | null,
   reserveTarget: null as Lecture | null,
   grabTarget: "" as string,
@@ -365,6 +366,7 @@ export async function login(username: string, password: string, remember: boolea
   state.loginProgress = "正在连接统一身份认证…";
   try {
     const res = await SessionService.Login(username.trim(), password, remember);
+
     if (res.needStage2) {
       // 陌生设备: 学校要求短信二次验证, 登录页切到验证码输入。
       state.needStage2 = true;
@@ -568,6 +570,19 @@ export function startGrab(
       toast("err", errorText(e));
     }
   })();
+}
+
+// setGrabTarget 记录抢座目标; 正在抢的时候直接切过去 (后端下一轮生效)。
+// name 只用于日志/提示展示, 让「当前在抢哪一讲」一眼可见。
+export async function setGrabTarget(wid: string, name = ""): Promise<void> {
+  state.grabTarget = wid;
+  if (!state.grab?.running) return;
+  try {
+    state.grab = await GrabService.SetTarget(wid, name);
+    toast("info", name ? `已切换抢座目标：${name}` : "已切换抢座目标");
+  } catch (e) {
+    toast("err", errorText(e));
+  }
 }
 
 export async function stopGrab(): Promise<void> {

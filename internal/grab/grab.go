@@ -213,6 +213,52 @@ func (e *Engine) SubmitCode(code string) error {
 	}
 }
 
+// SetTarget 在运行中切换抢座目标: 下一轮轮询就会换成新的讲座, 不需要先停止。
+//
+// 轮询循环每轮都用 currentWID() 重新定位目标, 所以只改 State.WID 即可;
+// 同时重置状态行去重计数, 免得新目标沿用上一个目标的「已连续 N 轮」。
+// name 只用于日志和界面展示 (调用方从讲座列表里取), 可以为空。
+func (e *Engine) SetTarget(wid, name string) error {
+	wid = strings.TrimSpace(wid)
+	if wid == "" {
+		return errors.New("请先选择讲座")
+	}
+
+	e.mu.Lock()
+	if !e.state.Running {
+		e.mu.Unlock()
+		return errors.New("抢座未在运行")
+	}
+	if e.state.WID == wid {
+		e.mu.Unlock()
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	e.state.WID = wid
+	e.state.Name = name
+	e.state.Phase = PhaseWaiting
+	e.state.Captcha = ""
+	e.state.CaptchaAt = ""
+	e.lastStatus = ""
+	e.sameCount = 0
+	if name != "" {
+		e.state.Message = "已切换目标: " + name
+	} else {
+		e.state.Message = "已切换目标, 等待下一轮轮询"
+	}
+	e.state.UpdatedAt = now()
+	snapshot := e.cloneLocked()
+	e.mu.Unlock()
+
+	e.emit(snapshot)
+	if name != "" {
+		e.logf("info", "已切换抢座目标: "+name)
+	} else {
+		e.logf("info", "已切换抢座目标")
+	}
+	return nil
+}
+
 // RefreshCaptcha 让正在等待的循环换一张验证码。
 func (e *Engine) RefreshCaptcha() {
 	select {
@@ -509,12 +555,18 @@ func (e *Engine) fail(message string) {
 }
 
 func (e *Engine) setName(name string) {
+	changed := false
 	e.update(func(s *State) {
 		if s.Name != name {
 			s.Name = name
 			s.Message = "目标: " + name
+			changed = true
 		}
 	})
+	if changed {
+		// 目标变了就记一行, 这样日志里能直接看到当前在抢哪一讲。
+		e.logf("info", "当前抢座目标: "+name)
+	}
 }
 
 func (e *Engine) currentWID() string {
