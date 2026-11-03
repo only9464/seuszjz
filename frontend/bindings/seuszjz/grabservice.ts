@@ -39,8 +39,8 @@ export function SetTarget(wid: string, name: string): $CancellablePromise<grab$0
 /**
  * Start 启动抢座任务。
  */
-export function Start(wid: string, waitMs: number, attemptMs: number, cooldown: number, autoCaptcha: boolean): $CancellablePromise<grab$0.State> {
-    return $Call.ByID(4196200765, wid, waitMs, attemptMs, cooldown, autoCaptcha);
+export function Start(wid: string, waitMs: number, attemptMs: number, cooldown: number, autoCaptcha: boolean, humanizeDelay: boolean, humanizeMinMs: number, humanizeMaxMs: number, humanizeWarmList: boolean): $CancellablePromise<grab$0.State> {
+    return $Call.ByID(4196200765, wid, waitMs, attemptMs, cooldown, autoCaptcha, humanizeDelay, humanizeMinMs, humanizeMaxMs, humanizeWarmList);
 }
 
 /**

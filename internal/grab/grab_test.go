@@ -2,6 +2,7 @@ package grab
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -12,11 +13,12 @@ import (
 
 // probeAPI 记录调用次数, 用来观察两种节奏下的请求频率。
 type probeAPI struct {
-	mu       sync.Mutex
-	lecture  seu.Lecture
-	reserve  func() seu.Result
-	activity int
-	reserves int
+	mu        sync.Mutex
+	lecture   seu.Lecture
+	reserve   func() seu.Result
+	fetchHook func()
+	activity  int
+	reserves  int
 }
 
 func (p *probeAPI) Activities(context.Context) ([]seu.Lecture, time.Time, error) {
@@ -27,7 +29,15 @@ func (p *probeAPI) Activities(context.Context) ([]seu.Lecture, time.Time, error)
 	return []seu.Lecture{lecture}, time.Now(), nil
 }
 
-func (p *probeAPI) FetchCaptcha(context.Context) ([]byte, error) { return []byte("jpeg"), nil }
+func (p *probeAPI) FetchCaptcha(context.Context) ([]byte, error) {
+	p.mu.Lock()
+	hook := p.fetchHook
+	p.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return []byte("jpeg"), nil
+}
 
 func (p *probeAPI) Reserve(context.Context, string, string) (seu.Result, error) {
 	p.mu.Lock()
@@ -262,5 +272,179 @@ func TestSetTargetRequiresRunning(t *testing.T) {
 	eng := New()
 	if err := eng.SetTarget("a", "讲座A"); err == nil {
 		t.Fatal("未运行时 SetTarget 应当报错")
+	}
+}
+
+// TestNowHasMillis 检查日志时间戳精确到毫秒。
+func TestNowHasMillis(t *testing.T) {
+	pattern := regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}$`)
+	if !pattern.MatchString(now()) {
+		t.Fatalf("现在的时间戳 = %q, 期望形如 15:04:05.123", now())
+	}
+}
+
+// TestHumanDelayRange 检查随机等待落在指定区间, 且区间相等/反向时能退化。
+func TestHumanDelayRange(t *testing.T) {
+	min, max := 300*time.Millisecond, 800*time.Millisecond
+	for i := 0; i < 200; i++ {
+		d := humanDelay(min, max)
+		if d < min || d > max {
+			t.Fatalf("humanDelay(%v, %v) = %v, 超出区间", min, max, d)
+		}
+	}
+	if d := humanDelay(500*time.Millisecond, 500*time.Millisecond); d != 500*time.Millisecond {
+		t.Fatalf("区间相等时应固定等待, 实际 %v", d)
+	}
+	// 反向区间应当自动纠正, 仍然落在 [min, max] 内。
+	for i := 0; i < 50; i++ {
+		d := humanDelay(800*time.Millisecond, 300*time.Millisecond)
+		if d < 300*time.Millisecond || d > 800*time.Millisecond {
+			t.Fatalf("反向区间没被纠正: %v", d)
+		}
+	}
+}
+
+// TestHumanizeDelaySlowsSubmit 检查开启后「取码 → 提交」之间确实会等。
+func TestHumanizeDelaySlowsSubmit(t *testing.T) {
+	api := &probeAPI{
+		lecture: seu.Lecture{WID: "a", Name: "A", Status: seu.StatusAvailable},
+		reserve: func() seu.Result { return seu.Result{Success: true, Kind: "ok", Message: "预约成功"} },
+	}
+	eng := started(t, api, Options{
+		WID:             "a",
+		WaitInterval:    time.Second,
+		AttemptInterval: 10 * time.Millisecond,
+		HumanizeDelay:   true,
+		HumanizeMin:     120 * time.Millisecond,
+		HumanizeMax:     140 * time.Millisecond,
+	})
+	time.Sleep(60 * time.Millisecond)
+	// 取码之后应该还在等, 尚未提交。
+	if _, reserves := api.counts(); reserves != 0 {
+		t.Fatalf("拟人化等待期间不该提交, 实际已提交 %d 次", reserves)
+	}
+	time.Sleep(200 * time.Millisecond)
+	eng.Stop()
+	if _, reserves := api.counts(); reserves == 0 {
+		t.Fatal("等待结束后应当提交")
+	}
+}
+
+// TestHumanizeWarmList 检查开启后提交前会多刷一次列表。
+func TestHumanizeWarmList(t *testing.T) {
+	api := &probeAPI{
+		lecture: seu.Lecture{WID: "a", Name: "A", Status: seu.StatusAvailable},
+		reserve: func() seu.Result { return seu.Result{Success: true, Kind: "ok", Message: "预约成功"} },
+	}
+	eng := started(t, api, Options{
+		WID:              "a",
+		WaitInterval:     time.Second,
+		AttemptInterval:  10 * time.Millisecond,
+		HumanizeWarmList: true,
+	})
+	time.Sleep(200 * time.Millisecond)
+	eng.Stop()
+
+	activities, reserves := api.counts()
+	if reserves == 0 {
+		t.Fatal("应当至少提交一次")
+	}
+	// 一次成功的提交 = 1 次轮询 + 1 次「提交前刷新」, 所以列表请求至少 2 次。
+	if activities < 2 {
+		t.Fatalf("提交前没有额外刷新列表: 列表请求 %d 次", activities)
+	}
+	found := false
+	for _, entry := range eng.State().Logs {
+		if strings.Contains(entry.Text, "拟人化: 提交前刷新一次列表") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("日志里没有拟人化刷新记录")
+	}
+}
+
+// TestAttemptIntervalDelaysFirstSubmit 检查「提交间隔」现在是「发现可预约后等多久再提交」。
+func TestAttemptIntervalDelaysFirstSubmit(t *testing.T) {
+	api := &probeAPI{
+		lecture: seu.Lecture{WID: "a", Name: "A", Status: seu.StatusAvailable},
+		reserve: func() seu.Result { return seu.Result{Success: true, Kind: "ok", Message: "预约成功"} },
+	}
+	eng := started(t, api, Options{
+		WID:             "a",
+		WaitInterval:    time.Second,
+		AttemptInterval: 150 * time.Millisecond,
+	})
+	defer eng.Stop()
+
+	time.Sleep(80 * time.Millisecond)
+	if _, reserves := api.counts(); reserves != 0 {
+		t.Fatalf("发现可预约后应先等 150ms, 实际已经提交 %d 次", reserves)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if _, reserves := api.counts(); reserves == 0 {
+		t.Fatal("等待结束后应当提交")
+	}
+
+	found := false
+	for _, entry := range eng.State().Logs {
+		if strings.Contains(entry.Text, "检测到可预约") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("日志里缺少「检测到可预约, 150ms 后开始提交」")
+	}
+}
+
+// TestHumanizeDelayCoversRecognise 检查拟人化等待会把识别耗时算进去:
+// 「取码完成 → 提交」的真实间隔应当贴近目标值, 而不是目标值 + 识别用时。
+func TestHumanizeDelayCoversRecognise(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		fetchDone time.Time
+		submitAt  time.Time
+	)
+	api := &probeAPI{
+		lecture: seu.Lecture{WID: "a", Name: "A", Status: seu.StatusAvailable},
+		reserve: func() seu.Result {
+			mu.Lock()
+			submitAt = time.Now()
+			mu.Unlock()
+			return seu.Result{Success: true, Kind: "ok", Message: "预约成功"}
+		},
+	}
+	api.fetchHook = func() {
+		mu.Lock()
+		fetchDone = time.Now()
+		mu.Unlock()
+	}
+
+	eng := started(t, api, Options{
+		WID:             "a",
+		WaitInterval:    time.Second,
+		AttemptInterval: 20 * time.Millisecond,
+		HumanizeDelay:   true,
+		HumanizeMin:     150 * time.Millisecond,
+		HumanizeMax:     150 * time.Millisecond, // 固定值, 便于断言
+	})
+	time.Sleep(600 * time.Millisecond)
+	eng.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if submitAt.IsZero() {
+		for _, entry := range eng.State().Logs {
+			t.Logf("LOG %s [%s] %s", entry.At, entry.Level, entry.Text)
+		}
+		t.Fatalf("没有发生提交, phase=%s message=%s", eng.State().Phase, eng.State().Message)
+	}
+	gap := submitAt.Sub(fetchDone)
+	// 目标 150ms; 上界留 120ms 余量给识别与调度抖动（识别在测试里是瞬时的）。
+	if gap < 150*time.Millisecond || gap > 270*time.Millisecond {
+		t.Fatalf("取码到提交间隔 = %v, 期望接近 150ms", gap)
 	}
 }

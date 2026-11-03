@@ -560,10 +560,24 @@ export function startGrab(
   attemptMs: number,
   cooldown: number,
   autoCaptcha: boolean,
+  humanizeDelay = true,
+  humanizeMinMs = 900,
+  humanizeMaxMs = 1200,
+  humanizeWarmList = false,
 ): void {
   void (async () => {
     try {
-      state.grab = await GrabService.Start(wid, waitMs, attemptMs, cooldown, autoCaptcha);
+      state.grab = await GrabService.Start(
+        wid,
+        waitMs,
+        attemptMs,
+        cooldown,
+        autoCaptcha,
+        humanizeDelay,
+        humanizeMinMs,
+        humanizeMaxMs,
+        humanizeWarmList,
+      );
       state.grabTarget = wid;
       toast("info", "抢座任务已启动");
     } catch (e) {

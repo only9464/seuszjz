@@ -59,7 +59,7 @@ func TestBootstrapWithoutSavedState(t *testing.T) {
 	if boot.Status.HasSession || boot.Status.LoggedIn || boot.Settings.HasPassword {
 		t.Fatalf("没有快照时不应有登录信息: %+v", boot.Status)
 	}
-	if !boot.Settings.AutoLogin || boot.Settings.WaitMs != 1000 || boot.Settings.Theme != "dark" {
+	if !boot.Settings.AutoLogin || boot.Settings.WaitMs != store.Default().WaitMs || boot.Settings.Theme != "dark" {
 		t.Fatalf("默认设置不正确: %+v", boot.Settings)
 	}
 
@@ -125,7 +125,7 @@ func TestBootstrapIgnoresSnapshotWhenLoggedIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if boot.Status.SavedUsername != "" || boot.Settings.WaitMs != 1000 || boot.Status.HasSession {
+	if boot.Status.SavedUsername != "" || boot.Settings.WaitMs != store.Default().WaitMs || boot.Status.HasSession {
 		t.Fatalf("登录后不应再采纳快照: %+v %+v", boot.Status, boot.Settings)
 	}
 }

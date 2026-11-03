@@ -192,16 +192,20 @@ func (c *core) settings() Settings {
 	c.stateMu.RLock()
 	defer c.stateMu.RUnlock()
 	return Settings{
-		Username:    c.cfg.Username,
-		Remember:    c.cfg.Remember,
-		AutoLogin:   c.cfg.AutoLogin,
-		AutoCaptcha: c.cfg.AutoCaptcha,
-		WaitMs:      c.cfg.WaitMs,
-		AttemptMs:   c.cfg.AttemptMs,
-		Cooldown:    c.cfg.Cooldown,
-		Theme:       c.cfg.Theme,
-		NetMode:     string(seu.ParseNetMode(c.cfg.NetMode)),
-		HasPassword: c.pass != "",
+		Username:         c.cfg.Username,
+		Remember:         c.cfg.Remember,
+		AutoLogin:        c.cfg.AutoLogin,
+		AutoCaptcha:      c.cfg.AutoCaptcha,
+		WaitMs:           c.cfg.WaitMs,
+		AttemptMs:        c.cfg.AttemptMs,
+		Cooldown:         c.cfg.Cooldown,
+		HumanizeDelay:    c.cfg.HumanizeDelay,
+		HumanizeWarmList: c.cfg.HumanizeWarmList,
+		HumanizeMinMs:    c.cfg.HumanizeMinMs,
+		HumanizeMaxMs:    c.cfg.HumanizeMaxMs,
+		Theme:            c.cfg.Theme,
+		NetMode:          string(seu.ParseNetMode(c.cfg.NetMode)),
+		HasPassword:      c.pass != "",
 	}
 }
 
@@ -665,6 +669,14 @@ func (s *SessionService) SaveSettings(ctx context.Context, in Settings) (Setting
 	c.cfg.WaitMs = in.WaitMs
 	c.cfg.AttemptMs = in.AttemptMs
 	c.cfg.Cooldown = in.Cooldown
+	c.cfg.HumanizeDelay = in.HumanizeDelay
+	c.cfg.HumanizeWarmList = in.HumanizeWarmList
+	if in.HumanizeMinMs > 0 {
+		c.cfg.HumanizeMinMs = in.HumanizeMinMs
+	}
+	if in.HumanizeMaxMs > 0 {
+		c.cfg.HumanizeMaxMs = in.HumanizeMaxMs
+	}
 	c.cfg.Theme = in.Theme
 	c.cfg.NetMode = string(seu.ParseNetMode(in.NetMode))
 	if !in.Remember {
@@ -812,7 +824,8 @@ func NewGrabService(c *core) *GrabService { return &GrabService{core: c} }
 func (s *GrabService) State() (grab.State, error) { return s.core.eng.State(), nil }
 
 // Start 启动抢座任务。
-func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, cooldown int, autoCaptcha bool) (grab.State, error) {
+func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, cooldown int, autoCaptcha bool,
+	humanizeDelay bool, humanizeMinMs, humanizeMaxMs int, humanizeWarmList bool) (grab.State, error) {
 	c := s.core
 	if strings.TrimSpace(wid) == "" {
 		return grab.State{}, errors.New("请先选择要抢的讲座")
@@ -826,6 +839,11 @@ func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, 
 		WaitInterval:    clampMs(waitMs, 200, 60000, 1000),
 		AttemptInterval: clampMs(attemptMs, 50, 10000, 300),
 		Cooldown:        time.Duration(clampInt(cooldown, 0, 3600)) * time.Second,
+		// 拟人化参数由抢座页面直接传入 (界面上就能开关), 这里只做区间纠正。
+		HumanizeDelay:    humanizeDelay,
+		HumanizeWarmList: humanizeWarmList,
+		HumanizeMin:      time.Duration(clampInt(humanizeMinMs, 0, 30000)) * time.Millisecond,
+		HumanizeMax:      time.Duration(clampInt(humanizeMaxMs, 0, 30000)) * time.Millisecond,
 	}
 	if autoCaptcha {
 		detectCtx, cancel := context.WithTimeout(ctx, ocrTimeout)
