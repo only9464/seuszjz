@@ -90,6 +90,18 @@ export interface Settings {
     "waitMs": number;
     "attemptMs": number;
     "cooldown": number;
+
+    /**
+     * HumanizeDelay / HumanizeWarmList 是抢座的拟人化开关 (默认关闭)。
+     */
+    "humanizeDelay": boolean;
+    "humanizeWarmList": boolean;
+
+    /**
+     * HumanizeMinMs / HumanizeMaxMs 是「取码后随机等待」的区间 (毫秒)。
+     */
+    "humanizeMinMs": number;
+    "humanizeMaxMs": number;
     "theme": string;
 
     /**

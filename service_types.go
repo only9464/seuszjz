@@ -12,10 +12,16 @@ type Settings struct {
 	AutoLogin   bool   `json:"autoLogin"`
 	AutoCaptcha bool   `json:"autoCaptcha"`
 	// WaitMs 是等待开放时的轮询间隔 (毫秒); AttemptMs 是开放后两次提交的间隔 (毫秒)。
-	WaitMs    int    `json:"waitMs"`
-	AttemptMs int    `json:"attemptMs"`
-	Cooldown  int    `json:"cooldown"`
-	Theme     string `json:"theme"`
+	WaitMs    int `json:"waitMs"`
+	AttemptMs int `json:"attemptMs"`
+	Cooldown  int `json:"cooldown"`
+	// HumanizeDelay / HumanizeWarmList 是抢座的拟人化开关 (默认关闭)。
+	HumanizeDelay    bool `json:"humanizeDelay"`
+	HumanizeWarmList bool `json:"humanizeWarmList"`
+	// HumanizeMinMs / HumanizeMaxMs 是「取码后随机等待」的区间 (毫秒)。
+	HumanizeMinMs int    `json:"humanizeMinMs"`
+	HumanizeMaxMs int    `json:"humanizeMaxMs"`
+	Theme         string `json:"theme"`
 	// NetMode 是网络环境偏好: auto / campus / offcampus。
 	NetMode     string `json:"netMode"`
 	HasPassword bool   `json:"hasPassword"`

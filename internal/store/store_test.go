@@ -91,7 +91,7 @@ func TestRestoreEmptyKeepsDefaults(t *testing.T) {
 	if err := s.Restore(nil); err != nil {
 		t.Fatalf("空快照不应报错: %v", err)
 	}
-	if !s.Load().AutoLogin || s.Load().WaitMs != 1000 {
+	if !s.Load().AutoLogin || s.Load().WaitMs != Default().WaitMs {
 		t.Fatalf("默认配置不正确: %+v", s.Load())
 	}
 	if _, ok := s.LoadSession(); !ok {
@@ -109,8 +109,12 @@ func TestRestorePartialSnapshotUsesDefaults(t *testing.T) {
 		t.Fatalf("字段没恢复: %+v", cfg)
 	}
 	// 快照里没写的字段应该落到默认值, 而不是零值。
-	if !cfg.AutoLogin || !cfg.AutoCaptcha || cfg.WaitMs != 1000 || cfg.Cooldown != 300 || cfg.Theme != "dark" {
+	if !cfg.AutoLogin || !cfg.AutoCaptcha || cfg.WaitMs != Default().WaitMs || cfg.Cooldown != 300 || cfg.Theme != "dark" {
 		t.Fatalf("缺失字段没有取默认值: %+v", cfg)
+	}
+	// 拟人化默认开启, 区间 900~1200ms。
+	if !cfg.HumanizeDelay || cfg.HumanizeMinMs != 900 || cfg.HumanizeMaxMs != 1200 {
+		t.Fatalf("拟人化默认值不对: %+v", cfg)
 	}
 }
 
@@ -209,5 +213,32 @@ func TestImportLegacyFiles(t *testing.T) {
 	ok, err = New().ImportLegacy()
 	if err != nil || ok {
 		t.Fatalf("没有旧文件时应该返回 false: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestRestoreMigratesHumanizeDefaults 检查 v1 快照升级到 v2 时, 拟人化会被打开。
+func TestRestoreMigratesHumanizeDefaults(t *testing.T) {
+	s := New()
+	// v1: 拟人化当初默认关闭, 区间 300~800。
+	legacy := `{"version":1,"config":{"username":"220000001","humanizeDelay":false,"humanizeMinMs":300,"humanizeMaxMs":800}}`
+	if err := s.Restore([]byte(legacy)); err != nil {
+		t.Fatalf("恢复 v1 快照: %v", err)
+	}
+	cfg := s.Load()
+	if !cfg.HumanizeDelay || cfg.HumanizeMinMs != 900 || cfg.HumanizeMaxMs != 1200 {
+		t.Fatalf("v1 快照没有迁移到新的拟人化默认值: %+v", cfg)
+	}
+	if cfg.Username != "220000001" {
+		t.Fatalf("迁移时不该丢字段: %+v", cfg)
+	}
+
+	// v2 快照按用户实际选择, 不能被再次覆盖。
+	current := `{"version":2,"config":{"humanizeDelay":false,"humanizeMinMs":500,"humanizeMaxMs":600}}`
+	if err := s.Restore([]byte(current)); err != nil {
+		t.Fatalf("恢复 v2 快照: %v", err)
+	}
+	cfg = s.Load()
+	if cfg.HumanizeDelay || cfg.HumanizeMinMs != 500 || cfg.HumanizeMaxMs != 600 {
+		t.Fatalf("v2 快照不应被迁移覆盖: %+v", cfg)
 	}
 }

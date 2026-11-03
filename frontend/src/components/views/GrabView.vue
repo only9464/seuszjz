@@ -44,10 +44,16 @@ const selected = computed({
   },
 });
 
-const waitMs = ref(settings?.waitMs ?? 1000);
+const waitMs = ref(settings?.waitMs ?? 500);
 const attemptMs = ref(settings?.attemptMs ?? 300);
 const cooldown = ref(settings?.cooldown ?? 300);
 const autoCaptcha = ref(settings?.autoCaptcha ?? true);
+
+// 拟人化 (默认关闭): 让「取码 → 提交」的时序更像人工, 降低被判定为脚本的概率。
+const humanizeDelay = ref(settings?.humanizeDelay ?? true);
+const humanizeWarmList = ref(settings?.humanizeWarmList ?? false);
+const humanizeMin = ref(settings?.humanizeMinMs ?? 900);
+const humanizeMax = ref(settings?.humanizeMaxMs ?? 1200);
 
 const grabbing = computed(() => !!state.grab?.running);
 const captcha = computed(() => state.grab?.captcha ?? "");
@@ -78,13 +84,33 @@ watch(
 
 function begin(): void {
   if (!selected.value) return;
+  // 区间先纠正再保存: 允许用户先填大后填小, 不至于出现 min > max。
+  const minMs = Math.max(0, Math.min(30000, Math.round(humanizeMin.value || 0)));
+  const maxMs = Math.max(0, Math.min(30000, Math.round(humanizeMax.value || 0)));
+  humanizeMin.value = Math.min(minMs, maxMs);
+  humanizeMax.value = Math.max(minMs, maxMs);
+
   void saveSettings({
     waitMs: waitMs.value,
     attemptMs: attemptMs.value,
     cooldown: cooldown.value,
     autoCaptcha: autoCaptcha.value,
+    humanizeDelay: humanizeDelay.value,
+    humanizeWarmList: humanizeWarmList.value,
+    humanizeMinMs: humanizeMin.value,
+    humanizeMaxMs: humanizeMax.value,
   });
-  startGrab(selected.value, waitMs.value, attemptMs.value, cooldown.value, autoCaptcha.value);
+  startGrab(
+    selected.value,
+    waitMs.value,
+    attemptMs.value,
+    cooldown.value,
+    autoCaptcha.value,
+    humanizeDelay.value,
+    humanizeMin.value,
+    humanizeMax.value,
+    humanizeWarmList.value,
+  );
 }
 
 async function submit(): Promise<void> {
@@ -158,64 +184,103 @@ const phaseText = computed(() => {
         </Button>
       </div>
 
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div class="flex items-center gap-2">
-          <Label for="waitMs" class="text-[11px] font-normal text-muted-foreground">等待轮询</Label>
-          <Input
-            id="waitMs"
-            v-model.number="waitMs"
-            type="number"
-            min="200"
-            step="100"
-            class="h-7 w-20 text-xs tabular-nums"
-            :disabled="grabbing"
-          />
-          <span class="text-[11px] text-muted-foreground">ms</span>
+      <div class="space-y-2">
+        <!-- 第一行: 三个间隔参数 + 自动识别 + 统计 -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div class="flex items-center gap-2">
+            <Label for="waitMs" class="text-[11px] font-normal text-muted-foreground">等待轮询</Label>
+            <Input
+              id="waitMs"
+              v-model.number="waitMs"
+              type="number"
+              min="200"
+              step="100"
+              class="h-7 w-20 text-xs tabular-nums"
+              :disabled="grabbing"
+            />
+            <span class="text-[11px] text-muted-foreground">ms</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <Label for="attemptMs" class="text-[11px] font-normal text-muted-foreground">发现后等待</Label>
+            <Input
+              id="attemptMs"
+              v-model.number="attemptMs"
+              type="number"
+              min="50"
+              step="50"
+              class="h-7 w-20 text-xs tabular-nums"
+              :disabled="grabbing"
+            />
+            <span class="text-[11px] text-muted-foreground">ms</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <Label for="cooldown" class="text-[11px] font-normal text-muted-foreground">限流冷却</Label>
+            <Input
+              id="cooldown"
+              v-model.number="cooldown"
+              type="number"
+              min="0"
+              class="h-7 w-20 text-xs tabular-nums"
+              :disabled="grabbing"
+            />
+            <span class="text-[11px] text-muted-foreground">秒</span>
+          </div>
+
+          <Separator orientation="vertical" class="h-4!" />
+
+          <label class="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Switch v-model="autoCaptcha" :disabled="grabbing" />
+            自动识别验证码
+          </label>
+
+          <Separator orientation="vertical" class="h-4!" />
+
+          <p class="text-[11px] text-muted-foreground tabular-nums">
+            轮询 {{ state.grab?.round ?? 0 }} 轮 · 提交 {{ state.grab?.attempts ?? 0 }} 次 · 验证码
+            {{ state.grab?.captchaCount ?? 0 }} 张
+          </p>
+          <p v-if="state.grab?.startedAt" class="text-[11px] text-muted-foreground tabular-nums">
+            始于 {{ formatDateTime(state.grab.startedAt) }}
+          </p>
         </div>
 
-        <div class="flex items-center gap-2">
-          <Label for="attemptMs" class="text-[11px] font-normal text-muted-foreground">提交间隔</Label>
-          <Input
-            id="attemptMs"
-            v-model.number="attemptMs"
-            type="number"
-            min="50"
-            step="50"
-            class="h-7 w-20 text-xs tabular-nums"
-            :disabled="grabbing"
-          />
-          <span class="text-[11px] text-muted-foreground">ms</span>
+        <!-- 第二行: 拟人化 (默认关闭) -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <label class="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Switch v-model="humanizeDelay" :disabled="grabbing" />
+            取码后随机等待
+          </label>
+
+          <div v-if="humanizeDelay" class="flex items-center gap-1.5">
+            <Input
+              v-model.number="humanizeMin"
+              type="number"
+              min="0"
+              max="30000"
+              step="50"
+              class="h-7 w-24 text-xs tabular-nums"
+              :disabled="grabbing"
+            />
+            <span class="text-[11px] text-muted-foreground">~</span>
+            <Input
+              v-model.number="humanizeMax"
+              type="number"
+              min="0"
+              max="30000"
+              step="50"
+              class="h-7 w-24 text-xs tabular-nums"
+              :disabled="grabbing"
+            />
+            <span class="text-[11px] text-muted-foreground">ms</span>
+          </div>
+
+          <label class="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Switch v-model="humanizeWarmList" :disabled="grabbing" />
+            提交前刷新列表
+          </label>
         </div>
-
-        <div class="flex items-center gap-2">
-          <Label for="cooldown" class="text-[11px] font-normal text-muted-foreground">限流冷却</Label>
-          <Input
-            id="cooldown"
-            v-model.number="cooldown"
-            type="number"
-            min="0"
-            class="h-7 w-20 text-xs tabular-nums"
-            :disabled="grabbing"
-          />
-          <span class="text-[11px] text-muted-foreground">秒</span>
-        </div>
-
-        <Separator orientation="vertical" class="h-4!" />
-
-        <label class="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <Switch v-model="autoCaptcha" :disabled="grabbing" />
-          自动识别验证码
-        </label>
-
-        <Separator orientation="vertical" class="h-4!" />
-
-        <p class="text-[11px] text-muted-foreground tabular-nums">
-          轮询 {{ state.grab?.round ?? 0 }} 轮 · 提交 {{ state.grab?.attempts ?? 0 }} 次 · 验证码
-          {{ state.grab?.captchaCount ?? 0 }} 张
-        </p>
-        <p v-if="state.grab?.startedAt" class="text-[11px] text-muted-foreground tabular-nums">
-          始于 {{ formatDateTime(state.grab.startedAt) }}
-        </p>
       </div>
     </div>
 

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"strings"
 	"sync"
@@ -82,6 +83,15 @@ type Options struct {
 	// AttemptInterval 是已经可以预约时, 两次提交之间的间隔 (快节奏)。
 	AttemptInterval time.Duration
 	Cooldown        time.Duration
+	// HumanizeDelay 为真时, 取完验证码到提交之间随机等 [HumanizeMin, HumanizeMax],
+	// 让「取码 → 提交」的间隔看起来更像人工输入 (默认关闭)。
+	HumanizeDelay bool
+	// HumanizeMin / HumanizeMax 是上面那个随机等待的区间, 由用户在设置里填 (毫秒)。
+	HumanizeMin time.Duration
+	HumanizeMax time.Duration
+	// HumanizeWarmList 为真时, 提交前先刷新一次讲座列表, 模拟前端「进页面再提交」的请求序列
+	// (默认关闭)。
+	HumanizeWarmList bool
 	// Solve 为 nil 表示只能手动输入验证码。
 	Solve   func(ctx context.Context, jpeg []byte) (string, error)
 	OnState func(State)
@@ -373,11 +383,13 @@ func (e *Engine) attempt(ctx context.Context, target *seu.Lecture) (bool, error)
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
-		// 已经可以预约了: 两次提交之间只隔一个「开放后间隔」, 节奏要快。
-		if try > 0 {
-			if err := e.sleep(ctx, e.opts.AttemptInterval); err != nil {
-				return true, err
-			}
+		// 「提交间隔」现在表示「轮询发现可预约之后, 等多久再发出第一次提交」,
+		// 同时也作为后续重试之间的间隔 —— 先等再动手, 避免开放瞬间零延迟连发。
+		if try == 0 && e.opts.AttemptInterval > 0 {
+			e.logf("info", fmt.Sprintf("检测到可预约, %dms 后开始提交", e.opts.AttemptInterval.Milliseconds()))
+		}
+		if err := e.sleep(ctx, e.opts.AttemptInterval); err != nil {
+			return true, err
 		}
 		fetchAt := time.Now()
 		jpeg, err := e.api.FetchCaptcha(ctx)
@@ -388,6 +400,14 @@ func (e *Engine) attempt(ctx context.Context, target *seu.Lecture) (bool, error)
 		e.update(func(s *State) {
 			s.CaptchaCount++
 		})
+
+		// 拟人化目标间隔从「取码完成」开始算: 识别、手动输入、刷新列表花掉的时间都算在内,
+		// 最后只补足剩余部分 —— 这样「取码 → 提交」的真实间隔才等于用户设置的区间。
+		readyAt := time.Now()
+		humanTarget := time.Duration(0)
+		if e.opts.HumanizeDelay {
+			humanTarget = humanDelay(e.opts.HumanizeMin, e.opts.HumanizeMax)
+		}
 
 		code := ""
 		solveMs := int64(0)
@@ -420,6 +440,31 @@ func (e *Engine) attempt(ctx context.Context, target *seu.Lecture) (bool, error)
 				return false, err
 			}
 			code = manual
+		}
+
+		// 拟人化 (默认关闭): 提交前先刷新一次列表, 模拟前端「进页面 → 取码 → 提交」的请求序列。
+		if e.opts.HumanizeWarmList {
+			warmAt := time.Now()
+			if _, _, err := e.api.Activities(ctx); err != nil {
+				e.logf("warn", "拟人化: 提交前刷新列表失败 ("+err.Error()+"), 继续提交")
+			} else {
+				e.logf("info", fmt.Sprintf("拟人化: 提交前刷新一次列表, 耗时 %dms",
+					time.Since(warmAt).Milliseconds()))
+			}
+		}
+		// 拟人化 (默认关闭): 补足到目标间隔再提交, 不会因为识别耗时把间隔拉长。
+		if e.opts.HumanizeDelay {
+			used := time.Since(readyAt)
+			if rest := humanTarget - used; rest > 0 {
+				e.logf("info", fmt.Sprintf("拟人化: 取码后已用 %dms, 再补 %dms (目标 %dms)",
+					used.Milliseconds(), rest.Milliseconds(), humanTarget.Milliseconds()))
+				if err := e.sleep(ctx, rest); err != nil {
+					return true, err
+				}
+			} else {
+				e.logf("info", fmt.Sprintf("拟人化: 取码后已用 %dms, 超过目标 %dms, 直接提交",
+					used.Milliseconds(), humanTarget.Milliseconds()))
+			}
 		}
 
 		submitAt := time.Now()
@@ -665,7 +710,22 @@ func (e *Engine) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func now() string { return seu.Now().Format("15:04:05") }
+func now() string { return seu.Now().Format("15:04:05.000") }
+
+// humanDelay 在 [min, max] 之间取一个随机等待时长; 区间非法或相等时退化为固定值。
+func humanDelay(min, max time.Duration) time.Duration {
+	if min < 0 {
+		min = 0
+	}
+	if max < min {
+		min, max = max, min
+	}
+	span := int((max - min) / time.Millisecond)
+	if span <= 0 {
+		return min
+	}
+	return min + time.Duration(rand.IntN(span+1))*time.Millisecond
+}
 
 // shortDuration 把时长压成「2 小时 5 分」这样的两段式文案。
 func shortDuration(d time.Duration) string {

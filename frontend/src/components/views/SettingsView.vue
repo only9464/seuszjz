@@ -40,9 +40,7 @@ const autoCaptcha = computed({
   set: (value: boolean) => void saveSettings({ autoCaptcha: value }),
 });
 
-
-
-const waitMs = ref(settings.value?.waitMs ?? 1000);
+const waitMs = ref(settings.value?.waitMs ?? 500);
 const attemptMs = ref(settings.value?.attemptMs ?? 300);
 const cooldown = ref(settings.value?.cooldown ?? 300);
 
@@ -164,8 +162,10 @@ function saveCooldown(): void {
 
             <div class="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5">
               <div class="space-y-0.5">
-                <Label for="attemptMs" class="text-xs font-medium">提交间隔（毫秒）</Label>
-                <p class="text-[11px] text-muted-foreground">已开放时两次提交之间等多久，快一点更容易抢到</p>
+                <Label for="attemptMs" class="text-xs font-medium">发现后等待（毫秒）</Label>
+                <p class="text-[11px] text-muted-foreground">
+                  发现可预约后等多久再提交；也用作多次重试之间的间隔
+                </p>
               </div>
               <Input
                 id="attemptMs"
@@ -192,6 +192,7 @@ function saveCooldown(): void {
                 @blur="saveCooldown"
               />
             </div>
+
           </CardContent>
         </Card>
 
