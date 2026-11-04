@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -69,6 +70,36 @@ func summarizeSetCookie(lines []string) string {
 		parts = append(parts, name+" ["+strings.Join(attrs, " ")+"]")
 	}
 	return strings.Join(parts, " | ")
+}
+
+// traceHeaderKeys 是排查失败时最有价值的响应头 (前缀匹配, 小写比较)。
+//
+// 例如 server=Tengine / x-cache=MISS 说明是网关直接返回的; 带 waf / glb 字样
+// 说明被风控或负载均衡拦下; retry-after 说明是明确的限流。
+var traceHeaderKeys = []string{
+	"server", "via", "x-cache", "x-cache-status", "x-powered-by", "content-type",
+	"retry-after", "x-sdp", "x-request-id", "x-trace-id", "glb-", "waf", "cf-ray", "date",
+}
+
+// summarizeHeaders 挑出上面那些响应头, 拼成一行便于写日志。
+func summarizeHeaders(h http.Header) string {
+	parts := make([]string, 0, len(h))
+	for name, values := range h {
+		lower := strings.ToLower(name)
+		matched := false
+		for _, key := range traceHeaderKeys {
+			if strings.HasPrefix(lower, key) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		parts = append(parts, name+"="+strings.Join(values, ","))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
 }
 
 // looksLikeJSONBody 判断响应体是否是 JSON (会话失效时服务端会返回 HTML 登录页)。
@@ -176,8 +207,8 @@ func (s *Session) do(ctx context.Context, req request) (*response, error) {
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !looksLikeJSONBody(data) {
-		s.logf("  !! 非常规响应: status=%d location=%q body=%q",
-			resp.StatusCode, resp.Header.Get("Location"), bodySnippet(data))
+		s.logf("  !! 非常规响应: status=%d location=%q headers=%q body=%q",
+			resp.StatusCode, resp.Header.Get("Location"), summarizeHeaders(resp.Header), bodySnippet(data))
 	}
 
 	return &response{

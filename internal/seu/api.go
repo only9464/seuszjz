@@ -23,15 +23,16 @@ func (s *Session) callAPI(ctx context.Context, req request) (map[string]any, err
 	// 先看状态码: 5xx / 429 是服务端临时故障 (开抢峰值很常见), 会话其实还好好的,
 	// 不能按「会话失效」处理, 否则会触发一次完全没必要的重新登录。
 	if resp.status == http.StatusTooManyRequests || resp.status >= 500 {
-		return nil, fmt.Errorf("%w (HTTP %d, body=%q)",
-			ErrTransient, resp.status, bodySnippet(resp.body))
+		return nil, fmt.Errorf("%w (HTTP %d, headers=%q, body=%q)",
+			ErrTransient, resp.status, summarizeHeaders(resp.header), bodySnippet(resp.body))
 	}
 	if resp.isRedirect() || !resp.looksLikeJSON() {
 		s.markExpired()
 		// 把现场证据带在错误里: 是「被重定向到登录页」(会话被踢) 还是
 		// 「网关/风控返回 HTML」一眼可辨, 不用再靠猜。
-		return nil, fmt.Errorf("%w (HTTP %d, location=%q, body=%q)",
-			ErrSessionExpired, resp.status, resp.header.Get("Location"), bodySnippet(resp.body))
+		return nil, fmt.Errorf("%w (HTTP %d, location=%q, headers=%q, body=%q)",
+			ErrSessionExpired, resp.status, resp.header.Get("Location"),
+			summarizeHeaders(resp.header), bodySnippet(resp.body))
 	}
 	var data map[string]any
 	if err := json.Unmarshal(resp.body, &data); err != nil {

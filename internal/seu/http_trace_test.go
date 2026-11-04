@@ -19,6 +19,8 @@ func TestHTTPTraceLogsFailure(t *testing.T) {
 		lines []string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "Tengine")
+		w.Header().Set("X-Cache", "MISS")
 		http.Redirect(w, r, "https://auth.seu.edu.cn/dist/", http.StatusFound)
 	}))
 	defer srv.Close()
@@ -121,6 +123,8 @@ func TestCallAPISessionExpiredCarriesEvidence(t *testing.T) {
 // 2026-11-04 那次抢座失败就是 yySave.do 返回 503 被误判导致去重新登录。
 func TestCallAPI503IsTransient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "nginx")
+		w.Header().Set("Retry-After", "2")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("<html><title>Error</title>An error occurred.</html>"))
 	}))
@@ -139,6 +143,9 @@ func TestCallAPI503IsTransient(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "HTTP 503") {
 		t.Fatalf("错误信息应带上状态码: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Server=nginx") || !strings.Contains(err.Error(), "Retry-After=2") {
+		t.Fatalf("错误信息应带上响应头: %v", err)
 	}
 }
 
