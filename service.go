@@ -4,9 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -43,6 +49,15 @@ type core struct {
 	ocr   *ocr.Solver
 	eng   *grab.Engine
 
+	// 抢座日志落盘: logFile 为 nil 表示当前没有在写 (没开始或写失败)。
+	logMu   sync.Mutex
+	logFile *os.File
+	logPath string
+	// traceFile 是启动期的协议日志 (登录等, 抢座还没开始时也写), 每天一个文件。
+	traceFile *os.File
+	// traceOn 缓存「是否写协议日志」, 供 tracef 无锁读取 (避免与 stateMu 反序加锁)。
+	traceOn atomic.Bool
+
 	netMu sync.Mutex
 
 	stateMu sync.RWMutex
@@ -69,7 +84,7 @@ type core struct {
 }
 
 func newCore(app *application.App) *core {
-	return &core{
+	c := &core{
 		app:   app,
 		store: store.New(),
 		ocr:   ocr.New(),
@@ -78,6 +93,8 @@ func newCore(app *application.App) *core {
 		// 快照交回来 (Bootstrap 里的 adopt) 再填。
 		cfg: store.Default(),
 	}
+	c.refreshTrace()
+	return c
 }
 
 // adopt 用前端交回的快照恢复账号与会话。
@@ -203,6 +220,7 @@ func (c *core) settings() Settings {
 		HumanizeWarmList: c.cfg.HumanizeWarmList,
 		HumanizeMinMs:    c.cfg.HumanizeMinMs,
 		HumanizeMaxMs:    c.cfg.HumanizeMaxMs,
+		GrabLog:          c.grabLogEnabled(),
 		Theme:            c.cfg.Theme,
 		NetMode:          string(seu.ParseNetMode(c.cfg.NetMode)),
 		HasPassword:      c.pass != "",
@@ -220,7 +238,7 @@ func (c *core) status() Status {
 		LoggedIn:      c.sess != nil && c.sess.LoggedIn(),
 		User:          c.user,
 		SavedUsername: c.cfg.Username,
-		HasSession:    c.cached != nil,
+		HasSession:    c.cached != nil && !c.cached.TrustOnly,
 		OcrAvailable:  ok,
 		OcrInfo:       info,
 		Version:       Version,
@@ -250,9 +268,12 @@ func (c *core) newSession(username, password string) *seu.Session {
 		Username: username,
 		Password: password,
 		Timeout:  30 * time.Second,
-		NetMode:  c.netModePref(),
+		// 开了抢座日志 (dev 版或用户手动开启) 就顺带打开协议级追踪: 每个请求的
+		// 状态码 / 耗时 / 重定向 / 响应片段都会写进同一份日志, 失败现场可直接复盘。
+		Debug:   c.grabLogEnabled(),
+		NetMode: c.netModePref(),
 		Logf: func(format string, args ...any) {
-			c.logf("[seu] "+format, args...)
+			c.tracef(format, args...)
 		},
 	})
 }
@@ -271,6 +292,14 @@ func (c *core) loginLocked(ctx context.Context, username, password string) (seu.
 	}
 
 	sess := c.newSession(username, password)
+	// 把上次登录保存的 Cookie 先灌进去: CAS 的 TRUST_DEVICE_* 就在这里,
+	// 带上它才不会每次密码登录都被要求短信二次验证。
+	c.stateMu.RLock()
+	cached := c.cached
+	c.stateMu.RUnlock()
+	if cached != nil && len(cached.Cookies) > 0 {
+		sess.LoadCookies(cached.Cookies)
+	}
 	progress := func(stage, msg string) { c.emit("login:progress", msg) }
 	if err := sess.Login(ctx, progress); err != nil {
 		if errors.Is(err, seu.ErrStage2Required) {
@@ -446,6 +475,169 @@ func (c *core) requestContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), callTimeout)
 }
 
+// --- 抢座日志落盘 -----------------------------------------------------------
+
+// grabLogsDir 返回抢座日志目录。
+//
+// 优先 SEUSZJZ_LOG_DIR (方便容器挂卷), 其次 %LOCALAPPDATA%\seuszjz\logs,
+// 都拿不到就退回缓存目录 —— 只写日志, 不碰程序目录。
+func grabLogsDir() string {
+	if dir := strings.TrimSpace(os.Getenv("SEUSZJZ_LOG_DIR")); dir != "" {
+		return dir
+	}
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		return filepath.Join(base, "seuszjz", "logs")
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "seuszjz", "logs")
+	}
+	return filepath.Join(os.TempDir(), "seuszjz-logs")
+}
+
+// grabLogRetention 是日志保留天数, 超期的在每次开始抢座时清掉。
+const grabLogRetention = 7 * 24 * time.Hour
+
+// openGrabLog 为本次抢座新建日志文件并写入头部。失败只记一条日志, 不影响抢座。
+func (c *core) openGrabLog(target string, opts grab.Options) {
+	dir := grabLogsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.logf("创建日志目录失败: %v", err)
+		return
+	}
+	c.pruneGrabLogs(dir)
+
+	path := filepath.Join(dir, "grab-"+time.Now().Format("20060102-150405")+".log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		c.logf("创建日志文件失败: %v", err)
+		return
+	}
+
+	c.logMu.Lock()
+	c.logFile, c.logPath = file, path
+	c.logMu.Unlock()
+
+	header := fmt.Sprintf(
+		"=== 抢座日志 %s ===\n版本: %s\n目标: %s\n参数: 等待轮询 %dms · 发现后等待 %dms · 限流冷却 %ds · 拟人化 %v (%d~%dms) · 提交前刷新列表 %v\n\n",
+		time.Now().Format("2006-01-02 15:04:05"), Version, target,
+		opts.WaitInterval.Milliseconds(), opts.AttemptInterval.Milliseconds(),
+		int(opts.Cooldown.Seconds()),
+		opts.HumanizeDelay, opts.HumanizeMin.Milliseconds(), opts.HumanizeMax.Milliseconds(),
+		opts.HumanizeWarmList,
+	)
+	c.writeGrabLog(header)
+}
+
+// appendGrabLog 追加一行日志 (带毫秒时间戳)。
+func (c *core) appendGrabLog(entry grab.LogEntry) {
+	c.writeGrabLog(fmt.Sprintf("%s [%s] %s\n", entry.At, entry.Level, entry.Text))
+}
+
+// closeGrabLog 写页脚并关闭文件。
+func (c *core) closeGrabLog(state grab.State) {
+	c.writeGrabLog(fmt.Sprintf("\n=== 结束 %s · 阶段=%s · 轮询 %d 轮 · 提交 %d 次 · 验证码 %d 张 ===\n",
+		time.Now().Format("2006-01-02 15:04:05"), state.Phase, state.Round, state.Attempts, state.CaptchaCount))
+
+	c.logMu.Lock()
+	file := c.logFile
+	c.logFile = nil
+	c.logMu.Unlock()
+	if file != nil {
+		_ = file.Close()
+	}
+}
+
+// tracef 是 seu 层的协议级日志出口: 同时写 stderr 与抢座日志文件。
+func (c *core) tracef(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	log.Printf("[seu] %s", msg)
+
+	line := time.Now().Format("15:04:05.000") + " [trace] " + msg + "\n"
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.logFile != nil {
+		if _, err := c.logFile.WriteString(line); err != nil {
+			log.Printf("写入协议日志失败: %v", err)
+		}
+		return
+	}
+	// 还没开始抢座 (比如正在登录): 写到当天的启动日志里, 保证登录过程也留痕。
+	if !c.traceOn.Load() {
+		return
+	}
+	file := c.traceFile
+	if file == nil {
+		dir := grabLogsDir()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return
+		}
+		path := filepath.Join(dir, "app-"+time.Now().Format("20060102")+".log")
+		opened, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return
+		}
+		c.traceFile = opened
+		file = opened
+	}
+	if _, err := file.WriteString(line); err != nil {
+		log.Printf("写入协议日志失败: %v", err)
+	}
+}
+
+func (c *core) writeGrabLog(text string) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.logFile == nil {
+		return
+	}
+	if _, err := c.logFile.WriteString(text); err != nil {
+		log.Printf("写入抢座日志失败: %v", err)
+	}
+}
+
+// pruneGrabLogs 删除超过保留期的旧日志。
+func (c *core) pruneGrabLogs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-grabLogRetention)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".log") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
+}
+
+// currentGrabLog 返回当前 (或最近一次) 的日志文件路径。
+func (c *core) currentGrabLog() string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	return c.logPath
+}
+
+// grabLogEnabled 判断本次是否要把抢座日志落盘。
+//
+// dev 版 (Version == "dev") 固定开启, 方便开发期排查; 发行版默认关闭, 由用户在设置里开启。
+func (c *core) grabLogEnabled() bool {
+	if Version == "dev" {
+		return true
+	}
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.cfg.GrabLog
+}
+
+// refreshTrace 把「是否写协议日志」同步到 atomic 缓存, 供 tracef 无锁读取。
+func (c *core) refreshTrace() {
+	c.traceOn.Store(c.grabLogEnabled())
+}
+
 // --- grab.API 实现 ----------------------------------------------------------
 
 func (c *core) Activities(ctx context.Context) ([]seu.Lecture, time.Time, error) {
@@ -493,6 +685,10 @@ func (c *core) Reserve(ctx context.Context, wid, code string) (seu.Result, error
 		}
 		return err
 	})
+	if errors.Is(err, seu.ErrTransient) {
+		// 503/429 这类临时故障交给抢座引擎重试, 不触发重新登录。
+		return result, fmt.Errorf("%w: %v", grab.ErrRetryable, err)
+	}
 	return result, err
 }
 
@@ -544,7 +740,16 @@ func (s *SessionService) Login(ctx context.Context, username, password string, r
 		c.pass = ""
 		c.cfg.Password = ""
 	}
+	savedUser, savedPass := c.cfg.Username, c.pass
 	c.stateMu.Unlock()
+
+	// 密码留空 = 用已保存的密码 (「记住密码」的场景: 退出登录后不用重新输入)。
+	if strings.TrimSpace(password) == "" {
+		if savedPass == "" || strings.TrimSpace(username) != savedUser {
+			return LoginResult{}, errors.New("请填写密码")
+		}
+		password = savedPass
+	}
 
 	user, err := c.login(ctx, username, password)
 	if err != nil {
@@ -595,8 +800,13 @@ func (s *SessionService) AutoLogin(ctx context.Context) (LoginResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
 
-	if user, ok := c.restoreSession(ctx); ok {
-		return LoginResult{User: user, Source: "cache"}, nil
+	c.stateMu.RLock()
+	trustOnly := c.cached != nil && c.cached.TrustOnly
+	c.stateMu.RUnlock()
+	if !trustOnly {
+		if user, ok := c.restoreSession(ctx); ok {
+			return LoginResult{User: user, Source: "cache"}, nil
+		}
 	}
 
 	c.stateMu.RLock()
@@ -619,15 +829,33 @@ func (s *SessionService) Logout() (Status, error) {
 	c.eng.Stop()
 
 	c.stateMu.Lock()
+	// 退出登录只清会话, 但把「设备信任」Cookie 留下来: 否则下次密码登录又会被
+	// 当成陌生设备要求短信验证。要连信任一起清掉请用「清除本地登录信息」。
+	var trust []seu.SavedCookie
+	if c.cached != nil {
+		trust = seu.TrustCookies(c.cached.Cookies)
+	}
+	username := c.cfg.Username
 	if c.sess != nil {
 		c.sess.Reset()
 	}
 	c.sess = nil
 	c.user = seu.UserInfo{}
-	c.cached = nil
+	if len(trust) > 0 {
+		cached := store.Session{Username: username, Cookies: trust, TrustOnly: true, SavedAt: time.Now()}
+		c.cached = &cached
+	} else {
+		c.cached = nil
+	}
 	c.stateMu.Unlock()
 
-	c.store.ClearSession()
+	if len(trust) > 0 {
+		if err := c.store.SaveSession(store.Session{Username: username, Cookies: trust, TrustOnly: true, SavedAt: time.Now()}); err != nil {
+			c.logf("保存设备信任 Cookie 失败: %v", err)
+		}
+	} else {
+		c.store.ClearSession()
+	}
 	c.persist()
 	return c.status(), nil
 }
@@ -669,6 +897,7 @@ func (s *SessionService) SaveSettings(ctx context.Context, in Settings) (Setting
 	c.cfg.WaitMs = in.WaitMs
 	c.cfg.AttemptMs = in.AttemptMs
 	c.cfg.Cooldown = in.Cooldown
+	c.cfg.GrabLog = in.GrabLog
 	c.cfg.HumanizeDelay = in.HumanizeDelay
 	c.cfg.HumanizeWarmList = in.HumanizeWarmList
 	if in.HumanizeMinMs > 0 {
@@ -685,6 +914,8 @@ func (s *SessionService) SaveSettings(ctx context.Context, in Settings) (Setting
 	}
 	cfg := c.cfg
 	c.stateMu.Unlock()
+	// 日志开关可能刚被改过, 同步给无锁读取的 tracef。
+	c.refreshTrace()
 
 	if err := c.store.Save(cfg); err != nil {
 		return c.settings(), err
@@ -859,7 +1090,17 @@ func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, 
 	}
 
 	opts.OnState = func(state grab.State) { c.emit("grab:state", state) }
+	// 抢座日志落盘: dev 版固定开启, 发行版看设置；写失败不影响抢座本身。
+	if c.grabLogEnabled() {
+		// 会话可能是登录时就建好的, 这里补开协议追踪, 保证后面的请求都有记录。
+		if sess := c.session(); sess != nil {
+			sess.SetDebug(true)
+		}
+		c.openGrabLog(wid, opts)
+		opts.OnLog = c.appendGrabLog
+	}
 	opts.OnDone = func(state grab.State) {
+		c.closeGrabLog(state)
 		c.emit("grab:state", state)
 		if state.Phase == grab.PhaseSuccess {
 			if c.win != nil {
@@ -876,7 +1117,6 @@ func (s *GrabService) Start(ctx context.Context, wid string, waitMs, attemptMs, 
 	return c.eng.State(), nil
 }
 
-// Stop 停止抢座任务。
 // SetTarget 运行中切换抢座目标 (下一轮轮询生效)。name 仅用于日志与界面展示。
 func (s *GrabService) SetTarget(ctx context.Context, wid, name string) (grab.State, error) {
 	_ = ctx
@@ -901,6 +1141,35 @@ func (s *GrabService) SubmitCode(code string) (grab.State, error) {
 		return c.eng.State(), err
 	}
 	return c.eng.State(), nil
+}
+
+// LogPath 返回当前/最近一次的抢座日志文件路径 (没开启日志时为空串)。
+func (s *GrabService) LogPath(ctx context.Context) (string, error) {
+	_ = ctx
+	return s.core.currentGrabLog(), nil
+}
+
+// OpenLogDir 用系统文件管理器打开抢座日志目录。
+func (s *GrabService) OpenLogDir(ctx context.Context) (string, error) {
+	_ = ctx
+	dir := grabLogsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", errors.New("创建日志目录失败: " + err.Error())
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", dir)
+	case "darwin":
+		cmd = exec.Command("open", dir)
+	default:
+		cmd = exec.Command("xdg-open", dir)
+	}
+	if err := cmd.Start(); err != nil {
+		return dir, errors.New("打开日志目录失败: " + err.Error())
+	}
+	return dir, nil
 }
 
 // ClearLogs 清空抢座日志。

@@ -48,9 +48,11 @@ type Config struct {
 	HumanizeMinMs int `json:"humanizeMinMs"`
 	HumanizeMaxMs int `json:"humanizeMaxMs"`
 	// HumanizeWarmList 为真时, 提交前先刷新一次讲座列表 (默认关闭)。
-	HumanizeWarmList bool   `json:"humanizeWarmList"`
-	Theme            string `json:"theme"`   // dark / light
-	NetMode          string `json:"netMode"` // auto / campus / offcampus
+	HumanizeWarmList bool `json:"humanizeWarmList"`
+	// GrabLog 为真时把抢座日志写到本地文件 (发行版默认关闭; dev 版固定开启)。
+	GrabLog bool   `json:"grabLog"`
+	Theme   string `json:"theme"`   // dark / light
+	NetMode string `json:"netMode"` // auto / campus / offcampus
 }
 
 // Default 返回默认配置。
@@ -75,6 +77,9 @@ type Session struct {
 	Cookies  []seu.SavedCookie `json:"cookies"`
 	User     seu.UserInfo      `json:"user"`
 	SavedAt  time.Time         `json:"savedAt"`
+	// TrustOnly 表示这里只存了「设备信任」Cookie (退出登录后留下的),
+	// 不能拿去免登录, 只用于下次密码登录时带上, 免得又被要求二次验证。
+	TrustOnly bool `json:"trustOnly,omitempty"`
 }
 
 // State 是一份完整快照, 前端把它整个存进 localStorage。

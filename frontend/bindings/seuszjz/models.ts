@@ -102,6 +102,11 @@ export interface Settings {
      */
     "humanizeMinMs": number;
     "humanizeMaxMs": number;
+
+    /**
+     * GrabLog 为真时把抢座日志写入本地文件; dev 版固定开启。
+     */
+    "grabLog": boolean;
     "theme": string;
 
     /**

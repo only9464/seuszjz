@@ -22,6 +22,20 @@ export function ClearLogs(): $CancellablePromise<grab$0.State> {
 }
 
 /**
+ * LogPath 返回当前/最近一次的抢座日志文件路径 (没开启日志时为空串)。
+ */
+export function LogPath(): $CancellablePromise<string> {
+    return $Call.ByID(2492379328);
+}
+
+/**
+ * OpenLogDir 用系统文件管理器打开抢座日志目录。
+ */
+export function OpenLogDir(): $CancellablePromise<string> {
+    return $Call.ByID(4077459594);
+}
+
+/**
  * RefreshCaptcha 换一张验证码。
  */
 export function RefreshCaptcha(): $CancellablePromise<grab$0.State> {
@@ -29,7 +43,6 @@ export function RefreshCaptcha(): $CancellablePromise<grab$0.State> {
 }
 
 /**
- * Stop 停止抢座任务。
  * SetTarget 运行中切换抢座目标 (下一轮轮询生效)。name 仅用于日志与界面展示。
  */
 export function SetTarget(wid: string, name: string): $CancellablePromise<grab$0.State> {

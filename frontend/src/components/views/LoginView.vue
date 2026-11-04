@@ -92,9 +92,16 @@ function backToPassword(): void {
   cancelStage2();
 }
 
+// 记住密码: 已保存过密码时, 密码框可以留空, 直接点登录就用保存的那份。
+const hasSavedPassword = computed(() => !!state.settings?.hasPassword);
+
 async function submit(): Promise<void> {
-  if (!username.value.trim() || !password.value) {
-    toast("err", "请填写一卡通号与密码");
+  if (!username.value.trim()) {
+    toast("err", "请填写一卡通号");
+    return;
+  }
+  if (!password.value && !hasSavedPassword.value) {
+    toast("err", "请填写密码");
     return;
   }
   const ok = await login(username.value, password.value, remember.value);
@@ -206,15 +213,20 @@ function toggleTheme(): void {
                   v-model="password"
                   type="password"
                   autocomplete="current-password"
-                  placeholder="统一身份认证密码"
+                  :placeholder="hasSavedPassword ? '已保存密码，留空即用保存的密码' : '统一身份认证密码'"
                   :disabled="state.loggingIn"
                 />
+                <FieldDescription v-if="hasSavedPassword" class="text-[11px]">
+                  已保存密码：留空直接点「登录」，或用新密码覆盖
+                </FieldDescription>
               </Field>
 
               <Field orientation="horizontal" class="items-center justify-between rounded-md border px-3 py-2">
                 <div class="space-y-0.5">
-                  <FieldLabel for="remember" class="text-xs font-normal">记住登录信息</FieldLabel>
-                  <FieldDescription class="text-[11px]">存于浏览器 localStorage，可随时清除</FieldDescription>
+                  <FieldLabel for="remember" class="text-xs font-normal">记住密码</FieldLabel>
+                  <FieldDescription class="text-[11px]">
+                    记住学号、密码（混淆后）与会话，退出后不用重新输入
+                  </FieldDescription>
                 </div>
                 <Switch id="remember" v-model="remember" :disabled="state.loggingIn" />
               </Field>
