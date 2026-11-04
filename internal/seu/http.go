@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const maxBody = 8 << 20 // 8MB, 防止异常响应撑爆内存
@@ -44,6 +45,46 @@ func (r *response) isRedirect() bool {
 func (r *response) looksLikeJSON() bool {
 	return strings.HasPrefix(strings.TrimSpace(string(r.body)), "{") ||
 		strings.HasPrefix(strings.TrimSpace(string(r.body)), "[")
+}
+
+// summarizeSetCookie 把 Set-Cookie 压成「名字 + 关键属性」, 避免把整串值写进日志。
+func summarizeSetCookie(lines []string) string {
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		name := line
+		if idx := strings.IndexByte(line, '='); idx > 0 {
+			name = line[:idx]
+		}
+		attrs := make([]string, 0, 3)
+		lower := strings.ToLower(line)
+		for _, key := range []string{"domain=", "path=", "expires=", "max-age="} {
+			if i := strings.Index(lower, key); i >= 0 {
+				rest := line[i:]
+				if semi := strings.IndexByte(rest, ';'); semi >= 0 {
+					rest = rest[:semi]
+				}
+				attrs = append(attrs, strings.TrimSpace(rest))
+			}
+		}
+		parts = append(parts, name+" ["+strings.Join(attrs, " ")+"]")
+	}
+	return strings.Join(parts, " | ")
+}
+
+// looksLikeJSONBody 判断响应体是否是 JSON (会话失效时服务端会返回 HTML 登录页)。
+func looksLikeJSONBody(data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
+// bodySnippet 把响应体压成一行短片段, 写进日志时用; 超长直接截断。
+func bodySnippet(data []byte) string {
+	text := strings.Join(strings.Fields(string(data)), " ")
+	runes := []rune(text)
+	if len(runes) > 200 {
+		return string(runes[:200]) + "…"
+	}
+	return text
 }
 
 func (r *response) snippet() string {
@@ -107,9 +148,16 @@ func (s *Session) do(ctx context.Context, req request) (*response, error) {
 		client = s.follow
 	}
 
+	start := time.Now()
 	s.logf("%s %s", req.method, shortenURL(target))
+	if s.debugOn() {
+		if names := s.jar.Names(); len(names) > 0 {
+			s.logf("  >> cookies: %v", names)
+		}
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		s.logf("  !! 请求失败 (%dms): %v", time.Since(start).Milliseconds(), err)
 		return nil, fmt.Errorf("网络请求失败: %w", err)
 	}
 	defer resp.Body.Close()
@@ -118,7 +166,19 @@ func (s *Session) do(ctx context.Context, req request) (*response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("响应读取失败: %w", err)
 	}
-	s.logf("  -> %d %dB", resp.StatusCode, len(data))
+	s.logf("  -> %d %dB %dms", resp.StatusCode, len(data), time.Since(start).Milliseconds())
+
+	// 非 2xx / 非 JSON 的响应是排查抢座失败的关键证据 (被踢 / 被拦截 / 限流),
+	// 这里把 Location 和响应片段原样留下来。
+	if s.debugOn() {
+		if raw := resp.Header.Values("Set-Cookie"); len(raw) > 0 {
+			s.logf("  << set-cookie: %s", summarizeSetCookie(raw))
+		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !looksLikeJSONBody(data) {
+		s.logf("  !! 非常规响应: status=%d location=%q body=%q",
+			resp.StatusCode, resp.Header.Get("Location"), bodySnippet(data))
+	}
 
 	return &response{
 		status: resp.StatusCode,

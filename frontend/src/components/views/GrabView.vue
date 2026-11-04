@@ -6,6 +6,7 @@ import {
   formatDateTime,
   refreshGrabCaptcha,
   saveSettings,
+  openGrabLogDir,
   setGrabTarget,
   startGrab,
   state,
@@ -344,7 +345,10 @@ const phaseText = computed(() => {
                 <Switch v-model="follow" />
                 自动滚动
               </label>
-              <Button variant="ghost" size="sm" :disabled="!logs.length" @click="clearGrabLogs()">
+              <Button variant="ghost" size="sm" @click="openGrabLogDir()">
+              日志目录
+            </Button>
+            <Button variant="ghost" size="sm" :disabled="!logs.length" @click="clearGrabLogs()">
                 清屏
               </Button>
             </div>

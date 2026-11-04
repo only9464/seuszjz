@@ -599,6 +599,16 @@ export async function setGrabTarget(wid: string, name = ""): Promise<void> {
   }
 }
 
+// openGrabLogDir 用系统文件管理器打开抢座日志目录。
+export async function openGrabLogDir(): Promise<void> {
+  try {
+    const dir = await GrabService.OpenLogDir();
+    toast("info", dir ? `已打开日志目录：${dir}` : "已打开日志目录");
+  } catch (e) {
+    toast("err", errorText(e));
+  }
+}
+
 export async function stopGrab(): Promise<void> {
   try {
     state.grab = await GrabService.Stop();

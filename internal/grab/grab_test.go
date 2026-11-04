@@ -2,6 +2,7 @@ package grab
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -13,12 +14,13 @@ import (
 
 // probeAPI 记录调用次数, 用来观察两种节奏下的请求频率。
 type probeAPI struct {
-	mu        sync.Mutex
-	lecture   seu.Lecture
-	reserve   func() seu.Result
-	fetchHook func()
-	activity  int
-	reserves  int
+	mu         sync.Mutex
+	lecture    seu.Lecture
+	reserve    func() seu.Result
+	reserveErr func() error
+	fetchHook  func()
+	activity   int
+	reserves   int
 }
 
 func (p *probeAPI) Activities(context.Context) ([]seu.Lecture, time.Time, error) {
@@ -43,7 +45,13 @@ func (p *probeAPI) Reserve(context.Context, string, string) (seu.Result, error) 
 	p.mu.Lock()
 	p.reserves++
 	hook := p.reserve
+	errHook := p.reserveErr
 	p.mu.Unlock()
+	if errHook != nil {
+		if err := errHook(); err != nil {
+			return seu.Result{}, err
+		}
+	}
 	if hook != nil {
 		return hook(), nil
 	}
@@ -446,5 +454,53 @@ func TestHumanizeDelayCoversRecognise(t *testing.T) {
 	// 目标 150ms; 上界留 120ms 余量给识别与调度抖动（识别在测试里是瞬时的）。
 	if gap < 150*time.Millisecond || gap > 270*time.Millisecond {
 		t.Fatalf("取码到提交间隔 = %v, 期望接近 150ms", gap)
+	}
+}
+
+// TestReserveTransientRetries 检查提交遇到 5xx/429 (ErrRetryable) 时不会结束任务,
+// 而是等下一个间隔重试 —— 这正是「开放瞬间 yySave 返回 503」的场景。
+func TestReserveTransientRetries(t *testing.T) {
+	var (
+		calls int
+		mu    sync.Mutex
+	)
+	api := &probeAPI{
+		lecture: seu.Lecture{WID: "a", Name: "A", Status: seu.StatusAvailable},
+		reserveErr: func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			if calls <= 2 {
+				return fmt.Errorf("%w: 服务端临时故障 (HTTP 503)", ErrRetryable)
+			}
+			return nil
+		},
+	}
+	eng := started(t, api, Options{
+		WID:             "a",
+		WaitInterval:    time.Second,
+		AttemptInterval: 30 * time.Millisecond,
+	})
+	defer eng.Stop()
+
+	time.Sleep(400 * time.Millisecond)
+
+	_, reserves := api.counts()
+	if reserves < 3 {
+		t.Fatalf("临时故障后应当继续重试, 实际只提交 %d 次", reserves)
+	}
+	state := eng.State()
+	if state.Phase == PhaseFailed {
+		t.Fatalf("临时故障不该让任务失败: %s", state.Message)
+	}
+	warned := false
+	for _, entry := range state.Logs {
+		if strings.Contains(entry.Text, "提交接口临时故障") {
+			warned = true
+			break
+		}
+	}
+	if !warned {
+		t.Fatal("日志里应有「提交接口临时故障, 稍后重试」")
 	}
 }

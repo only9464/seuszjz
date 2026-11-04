@@ -61,7 +61,9 @@ func (s *Session) LoginWithStage2(ctx context.Context, code string, progress fun
 // (CHIPER_UID 等) 一旦清掉, 学校会认为这是一次全新的请求, 验证码随即失效。
 func (s *Session) login(ctx context.Context, stage2Code string, progress func(stage, msg string)) error {
 	if stage2Code == "" {
-		s.Reset()
+		// 注意: 这里只清登录态, 不清 Cookie —— 要让上次留下的「可信设备」
+		// Cookie (TRUST_DEVICE_*) 一起带上, 否则每次登录都被当成新设备。
+		s.resetState()
 	}
 	if strings.TrimSpace(s.cfg.Username) == "" {
 		return &LoginError{Msg: "请填写学号"}

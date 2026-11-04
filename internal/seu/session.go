@@ -72,6 +72,12 @@ func ParseNetMode(v string) NetMode {
 // ErrSessionExpired 表示 ehall 会话已失效, 需要重新登录。
 var ErrSessionExpired = errors.New("登录状态已失效, 请重新登录")
 
+// ErrTransient 表示服务端临时故障 (5xx / 429): 会话本身没坏, 过一会儿重试就行。
+//
+// 开抢瞬间 ehall 的 yySave.do 经常直接返回 503 + nginx 默认错误页, 这跟「被踢下线」
+// 完全是两回事 —— 以前会误判成会话失效去重新登录, 反而撞上二次验证把任务做死。
+var ErrTransient = errors.New("服务端临时故障, 可稍后重试")
+
 // ErrStage2Required 表示学校要求二次验证 (非可信设备)。
 //
 // 统一身份认证对「陌生设备」会返回 code 502 / info=非可信设备，要求输入短信验证码。
@@ -133,6 +139,20 @@ type Session struct {
 	user          UserInfo
 	userRaw       map[string]any
 	loggedIn      bool
+	debug         bool // 协议级追踪开关, 可在会话运行中打开 (见 SetDebug)
+}
+
+// SetDebug 在运行中打开/关闭协议级日志 (抓抢座失败现场时用)。
+func (s *Session) SetDebug(on bool) {
+	s.mu.Lock()
+	s.debug = on
+	s.mu.Unlock()
+}
+
+func (s *Session) debugOn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.debug
 }
 
 // NewSession 创建一个空会话。
@@ -140,6 +160,7 @@ func NewSession(cfg Config) *Session {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 40 * time.Second
 	}
+	debug := cfg.Debug
 	jar := NewJar()
 	noRedirect := func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -179,6 +200,7 @@ func NewSession(cfg Config) *Session {
 		},
 		csrf:          randomUUID(),
 		portalReferer: PortalBase + "/portal/shortcut.html",
+		debug:         debug,
 	}
 }
 
@@ -197,23 +219,57 @@ func (s *Session) User() UserInfo {
 }
 
 // Reset 清空会话状态 (登录失败或登出时调用)。
+// Reset 清空会话状态与 Cookie (退出登录 / 换账号时用)。
 func (s *Session) Reset() {
+	s.resetState()
+	s.jar.Clear()
+}
+
+// resetState 只清「登录态」, 保留 Cookie 罐。
+//
+// 密码登录时必须走这个: 学校把「这台设备可信」记在 CAS 下发的 Cookie
+// (TRUST_DEVICE_* / AGENTMD5_* 等) 上, 登录前清掉它们, 服务端就会把每次登录
+// 都当成陌生设备, 于是每次都要求短信二次验证。
+func (s *Session) resetState() {
 	s.mu.Lock()
 	s.loggedIn = false
 	s.user = UserInfo{}
 	s.userRaw = nil
 	s.mu.Unlock()
-	s.jar.Clear()
 }
 
 func (s *Session) logf(format string, args ...any) {
-	if s.cfg.Debug && s.cfg.Logf != nil {
+	if s.cfg.Logf == nil {
+		return
+	}
+	if s.debugOn() {
 		s.cfg.Logf(format, args...)
 	}
 }
 
 // Cookies 导出当前 Cookie, 用于持久化会话。
 func (s *Session) Cookies() []SavedCookie { return s.jar.Export() }
+
+// 设备信任相关的 Cookie 前缀。
+//
+// 学校把「这台设备已信任」记在 CAS 下发的 TRUST_DEVICE_<hash> 上 (30 天有效),
+// AGENTMD5_<hash> 是设备代理号, 一起保留。退出登录时只清会话类 Cookie, 这两个留着,
+// 这样下次密码登录不会又被当成陌生设备要求二次验证。
+var trustCookiePrefixes = []string{"TRUST_DEVICE_", "AGENTMD5_"}
+
+// TrustCookies 过滤出设备信任类 Cookie。
+func TrustCookies(cookies []SavedCookie) []SavedCookie {
+	out := make([]SavedCookie, 0, len(cookies))
+	for _, c := range cookies {
+		for _, prefix := range trustCookiePrefixes {
+			if strings.HasPrefix(c.Name, prefix) {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
 
 // LoadCookies 载入持久化的 Cookie。
 func (s *Session) LoadCookies(cookies []SavedCookie) { s.jar.Import(cookies) }

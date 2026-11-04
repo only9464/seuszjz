@@ -19,9 +19,11 @@ type Settings struct {
 	HumanizeDelay    bool `json:"humanizeDelay"`
 	HumanizeWarmList bool `json:"humanizeWarmList"`
 	// HumanizeMinMs / HumanizeMaxMs 是「取码后随机等待」的区间 (毫秒)。
-	HumanizeMinMs int    `json:"humanizeMinMs"`
-	HumanizeMaxMs int    `json:"humanizeMaxMs"`
-	Theme         string `json:"theme"`
+	HumanizeMinMs int `json:"humanizeMinMs"`
+	HumanizeMaxMs int `json:"humanizeMaxMs"`
+	// GrabLog 为真时把抢座日志写入本地文件; dev 版固定开启。
+	GrabLog bool   `json:"grabLog"`
+	Theme   string `json:"theme"`
 	// NetMode 是网络环境偏好: auto / campus / offcampus。
 	NetMode     string `json:"netMode"`
 	HasPassword bool   `json:"hasPassword"`

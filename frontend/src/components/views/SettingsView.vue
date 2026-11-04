@@ -44,6 +44,13 @@ const waitMs = ref(settings.value?.waitMs ?? 500);
 const attemptMs = ref(settings.value?.attemptMs ?? 300);
 const cooldown = ref(settings.value?.cooldown ?? 300);
 
+// dev 版的抢座日志固定开启 (方便开发期排查), 发行版由用户自己决定。
+const devBuild = computed(() => (state.status?.version ?? "") === "dev");
+const grabLog = computed({
+  get: () => state.settings?.grabLog ?? false,
+  set: (value: boolean) => void saveSettings({ grabLog: value }),
+});
+
 watch(settings, (value) => {
   if (!value) return;
   waitMs.value = value.waitMs;
@@ -191,6 +198,20 @@ function saveCooldown(): void {
                 class="h-8 w-20 text-xs tabular-nums"
                 @blur="saveCooldown"
               />
+            </div>
+
+            <div class="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5">
+              <div class="space-y-0.5">
+                <Label for="grabLog" class="text-xs font-medium">保存抢座日志</Label>
+                <p class="text-[11px] leading-relaxed text-muted-foreground">
+                  {{
+                    devBuild
+                      ? "dev 版固定开启：每次抢座写一份带毫秒时间戳的日志到本机"
+                      : "开启后每次抢座会写一份日志到本机，便于排查失败（默认关闭）"
+                  }}
+                </p>
+              </div>
+              <Switch id="grabLog" v-model="grabLog" :disabled="devBuild" />
             </div>
 
           </CardContent>

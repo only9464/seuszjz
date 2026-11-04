@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"seuszjz/internal/grab"
 	"seuszjz/internal/seu"
 	"seuszjz/internal/store"
 )
@@ -170,5 +174,130 @@ func TestBootstrapImportsLegacyFiles(t *testing.T) {
 	// 只读不写: 旧文件保持原样, 不删除。
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
 		t.Fatalf("不应该动旧文件: %v", err)
+	}
+}
+
+// TestGrabLogWritesFile 检查 dev 版会把抢座日志写进本地文件 (带毫秒时间戳与页脚)。
+func TestGrabLogWritesFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SEUSZJZ_LOG_DIR", dir)
+
+	c := newTestCore(t)
+	opts := grab.Options{
+		WaitInterval:    500 * time.Millisecond,
+		AttemptInterval: 300 * time.Millisecond,
+		HumanizeDelay:   true,
+		HumanizeMin:     900 * time.Millisecond,
+		HumanizeMax:     1200 * time.Millisecond,
+	}
+	if !c.grabLogEnabled() {
+		t.Fatal("dev 版应当固定开启日志")
+	}
+	c.openGrabLog("WID-1", opts)
+	c.appendGrabLog(grab.LogEntry{At: "19:00:00.123", Level: "info", Text: "开始蹲守目标讲座"})
+	c.appendGrabLog(grab.LogEntry{At: "19:00:01.456", Level: "error", Text: "提交预约失败: 测试"})
+	c.closeGrabLog(grab.State{Phase: grab.PhaseFailed, Round: 2, Attempts: 1, CaptchaCount: 1})
+
+	path := c.currentGrabLog()
+	if path == "" {
+		t.Fatal("没有生成日志文件")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取日志: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"=== 抢座日志", "目标: WID-1", "拟人化 true (900~1200ms)",
+		"19:00:00.123 [info] 开始蹲守目标讲座",
+		"19:00:01.456 [error] 提交预约失败: 测试",
+		"=== 结束", "阶段=failed",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("日志缺少 %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestGrabLogDisabledInRelease 检查发行版默认不写日志, 除非用户在设置里打开。
+func TestGrabLogDisabledInRelease(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SEUSZJZ_LOG_DIR", dir)
+
+	old := Version
+	Version = "0.1.9"
+	defer func() { Version = old }()
+
+	c := newTestCore(t)
+	if c.grabLogEnabled() {
+		t.Fatal("发行版默认不应开启日志")
+	}
+	c.stateMu.Lock()
+	c.cfg.GrabLog = true
+	c.stateMu.Unlock()
+	if !c.grabLogEnabled() {
+		t.Fatal("设置里开启后应当写日志")
+	}
+}
+
+// TestLogoutKeepsTrustCookies 检查退出登录会保留设备信任 Cookie, 清空会话类。
+func TestLogoutKeepsTrustCookies(t *testing.T) {
+	c := newTestCore(t)
+	svc := NewSessionService(c)
+
+	c.stateMu.Lock()
+	c.cfg.Username = "220000001"
+	c.cached = &store.Session{
+		Username: "220000001",
+		Cookies: []seu.SavedCookie{
+			{Name: "TRUST_DEVICE_feef", Value: "1", Host: "auth.seu.edu.cn", Path: "/"},
+			{Name: "AGENTMD5_abc", Value: "2", Host: "auth.seu.edu.cn", Path: "/"},
+			{Name: "TGT", Value: "secret", Host: "auth.seu.edu.cn", Path: "/"},
+			{Name: "GS_SESSIONID", Value: "sid", Host: "ehall.seu.edu.cn", Path: "/"},
+		},
+	}
+	c.stateMu.Unlock()
+
+	if _, err := svc.Logout(); err != nil {
+		t.Fatalf("退出登录: %v", err)
+	}
+
+	c.stateMu.RLock()
+	cached := c.cached
+	c.stateMu.RUnlock()
+	if cached == nil {
+		t.Fatal("退出登录后应当保留设备信任 Cookie")
+	}
+	names := map[string]bool{}
+	for _, cookie := range cached.Cookies {
+		names[cookie.Name] = true
+	}
+	if !names["TRUST_DEVICE_feef"] || !names["AGENTMD5_abc"] {
+		t.Fatalf("信任 Cookie 丢了: %v", cached.Cookies)
+	}
+	if names["TGT"] || names["GS_SESSIONID"] {
+		t.Fatalf("会话 Cookie 应当被清掉: %v", cached.Cookies)
+	}
+	saved, ok := c.store.LoadSession()
+	if !ok {
+		t.Fatal("信任 Cookie 应当写回会话缓存")
+	}
+	if !saved.TrustOnly {
+		t.Fatal("退出登录留下的缓存应标记为 TrustOnly, 不能拿去免登录")
+	}
+	if status := c.status(); status.HasSession {
+		t.Fatal("只剩信任 Cookie 时不该显示「已保存会话」")
+	}
+}
+
+// TestLoginWithoutPasswordNeedsSaved 检查密码留空且没有保存过密码时直接报错, 不发请求。
+func TestLoginWithoutPasswordNeedsSaved(t *testing.T) {
+	c := newTestCore(t)
+	svc := NewSessionService(c)
+
+	if _, err := svc.Login(context.Background(), "220000001", "", true); err == nil {
+		t.Fatal("没有保存过密码时, 密码留空应当报错")
+	} else if !strings.Contains(err.Error(), "请填写密码") {
+		t.Fatalf("错误信息不对: %v", err)
 	}
 }

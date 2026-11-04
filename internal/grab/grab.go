@@ -96,6 +96,8 @@ type Options struct {
 	Solve   func(ctx context.Context, jpeg []byte) (string, error)
 	OnState func(State)
 	OnDone  func(State)
+	// OnLog 在每条日志写入内存后回调一次 (可为 nil), 供上层落盘做持久化日志。
+	OnLog func(LogEntry)
 }
 
 // Engine 是抢座循环。
@@ -470,6 +472,12 @@ func (e *Engine) attempt(ctx context.Context, target *seu.Lecture) (bool, error)
 		submitAt := time.Now()
 		result, err := e.api.Reserve(ctx, target.WID, code)
 		if err != nil {
+			if errors.Is(err, ErrRetryable) {
+				// 服务端临时故障 (开抢峰值最常见的 503): 会话还在, 别去重登,
+				// 等下一个间隔再取码重试即可。
+				e.logf("warn", "提交接口临时故障, 稍后重试: "+err.Error())
+				continue
+			}
 			return false, fmt.Errorf("提交预约失败: %w", err)
 		}
 		submitMs := time.Since(submitAt).Milliseconds()
@@ -546,6 +554,9 @@ func (e *Engine) attempt(ctx context.Context, target *seu.Lecture) (bool, error)
 var (
 	errExpired = errors.New("验证码过期")
 	errReload  = errors.New("刷新验证码")
+	// ErrRetryable 表示这次提交遇到服务端临时故障 (5xx / 429), 会话没坏,
+	// 等一个「发现后等待」再取码重试即可, 不该把整个抢座任务判死。
+	ErrRetryable = errors.New("提交接口临时故障")
 )
 
 // waitManual 把验证码展示给用户并等待输入。
@@ -637,12 +648,17 @@ func (e *Engine) logf(level, text string) {
 	case len(logs) > maxLogs:
 		logs = logs[len(logs)-maxLogs:]
 	}
+	entry := LogEntry{At: now(), Level: level, Text: text}
 	e.state.Logs = logs
 	e.state.LogsDropped += dropped
 	e.state.UpdatedAt = now()
 	snapshot := e.cloneLocked()
 	e.mu.Unlock()
+
 	e.emit(snapshot)
+	if e.opts.OnLog != nil {
+		e.opts.OnLog(entry)
+	}
 }
 
 // logStatus 记录「这一轮查到的状态」, 做两层节流, 避免几百毫秒一轮时刷屏:
